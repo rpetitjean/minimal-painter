@@ -11,8 +11,6 @@
     <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.6.0/dist/aframe-extras.min.js"></script>
     <script src="https://unpkg.com/aframe-aabb-collider-component@3.2.0/dist/aframe-aabb-collider-component.min.js"></script>
     <script src="https://cdn.jsdelivr.net/gh/rpetitjean/minimal-painter/minimal-painter.js" ></script>
-    <script src="https://cdn.jsdelivr.net/gh/AdaRoseCannon/aframe-xr-boilerplate@glitch/simple-navmesh-constraint.js"></script>
-
 
   </head>
   
@@ -22,34 +20,18 @@
     <a-scene>
 
           <!-- PC & VR Rig -->
-    <a-entity  id="rig"  
-    painting-area-controller paint-tool-reset
-    position="0 0 0" rotation="0 0 0" 
-   
-    simple-navmesh-constraint="navmesh:.navmesh ;fall:0;height:0;exclude:.navmesh-hole;">
-
+    <a-entity  id="rig" painting-area-controller paint-tool-reset>
       <a-box id="camera" camera="fov:75; near: 0.1; far: 700" device-detector="xr: true, mobile: false" position="0 1.7 0"   visible="false"></a-box>
-     
-      <a-entity id="left-hand" 
-    meta-touch-controls="hand: left;  model: true" generic-tracked-controller-controls="hand: left" tracked-controls="controller: 0; idPrefix: OpenVR; hand: left"></a-entity>
-      
-      <a-entity id="right-hand"
-      oculus-thumbstick-controls="rig: #rig; speed: 0.2;" raycaster="objects: .clickable, .collidable; far: 8; lineOpacity: 0; showLine:false; interval: 1; " 
-      meta-touch-controls="hand: right;  model: true" generic-tracked-controller-controls="hand: right" tracked-controls="controller: 0; idPrefix: OpenVR; hand: right" >
-       
-      </a-entity>
+      <a-entity id="left-hand"  generic-tracked-controller-controls="hand: left"></a-entity>
+      <a-entity id="right-hand" oculus-thumbstick-controls="rig: #rig; speed: 0.2;" generic-tracked-controller-controls="hand: left"></a-entity>
     </a-entity>  
-
-
-
 
 <a-box position="-1 0.5 -3" rotation="0 45 0" color="#4CC3D9"></a-box>
       <a-sphere position="0 1.25 -5" radius="1.25" color="#EF2D5E"></a-sphere>
       <a-cylinder position="1 0.75 -3" radius="0.5" height="1.5" color="#FFC65D"></a-cylinder>
       <a-plane position="0 0 -4" rotation="-90 0 0" width="4" height="4" color="#7BC8A4; opacity: 0.0; transparent: true" id="paintingArea" class="navmesh"></a-plane>
+
     </a-scene>
-
-
 
   </body>
 </html>
