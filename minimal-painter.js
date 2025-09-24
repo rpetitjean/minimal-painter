@@ -1,55 +1,73 @@
 
-// 1) PAINTING-AREA-CONTROLLER
+// 1) PAINTING-AREA-CONTROLLER (updated to end strokes on exit)
 AFRAME.registerComponent('painting-area-controller', {
   init() {
     this.area      = document.querySelector('#paintingArea');
     this.leftHand  = document.getElementById('left-hand');
     this.rightHand = document.getElementById('right-hand');
     this.inside    = false;
+
+    // Reuse objects to avoid allocations each frame
+    this._rigPos = new THREE.Vector3();
+    this._box    = new THREE.Box3();
   },
+
   tick() {
-    if (!this.area.object3D) return;
-    const rigPos    = new THREE.Vector3();
-    this.el.object3D.getWorldPosition(rigPos);
-    const nowInside = new THREE.Box3()
+    if (!this.area || !this.area.object3D) return;
+
+    // Rig position (the component sits on #rig)
+    this.el.object3D.getWorldPosition(this._rigPos);
+
+    // Is rig inside the painting area’s bounds?
+    const nowInside = this._box
       .setFromObject(this.area.object3D)
-      .containsPoint(rigPos);
+      .containsPoint(this._rigPos);
+
     if (nowInside === this.inside) return;
+
     this.inside = nowInside;
     if (nowInside) this.enablePainting();
-    else           this.disablePainting();
+    else           this.disablePainting();   // <- will hard-stop any active stroke
   },
+
   enablePainting() {
     const painter = document.querySelector('[active-brush]');
+    if (!painter) return;
+
     const palette = (painter === this.leftHand) ? this.rightHand : this.leftHand;
     const dl      = painter.components['draw-line'];
 
     if (dl) {
-      // 1) color & show the sphere
+      // refresh tip color + show tip
       dl.indicator.material.color.set(dl.data.color);
       dl.indicator.visible = true;
-      // 2) enable drawing
+      // allow input again
       dl.enableInput();
     }
 
-    // 3) show the size‐picker on painter
+    // show UI
     painter.setAttribute('size-picker','');
-    // 4) show the color‐picker on palette
-    palette.setAttribute('color-picker','');
+    if (palette) palette.setAttribute('color-picker','');
   },
+
   disablePainting() {
     const painter = document.querySelector('[active-brush]');
     const palette = (painter === this.leftHand) ? this.rightHand : this.leftHand;
-    const dl      = painter.components['draw-line'];
+    const dl      = painter && painter.components['draw-line'];
 
     if (dl) {
-      dl.disableInput();
-      dl.indicator.visible = false;
+      // If a stroke is in progress, end it immediately so TubeGeometry stops updating.
+      if (dl.drawing) dl.stopLine();
+      dl.disableInput();              // remove listeners
+      dl.indicator.visible = false;   // hide tip
     }
-    painter.removeAttribute('size-picker');
-    palette.removeAttribute('color-picker');
+
+    // hide UI
+    if (painter) painter.removeAttribute('size-picker');
+    if (palette) palette.removeAttribute('color-picker');
   }
 });
+
 
 AFRAME.registerComponent('paint-tool-reset', {
   init() {
