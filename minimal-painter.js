@@ -207,15 +207,22 @@ AFRAME.registerComponent('hand-swapper', {
 
 
 // 3) DRAW-LINE
+// 3) DRAW-LINE  (updated: auto-stop if tip leaves #paintingArea)
 AFRAME.registerComponent('draw-line', {
   schema: {
-    color:     { type:'color',  default:'#EF2D5E' },
-    thickness: { type:'number', default:0.02   },
-    minDist:   { type:'number', default:0.005  },
-    tipOffset: { type:'number', default:0.05   }
+    color:     { type:'color',    default:'#EF2D5E' },
+    thickness: { type:'number',   default:0.02 },
+    minDist:   { type:'number',   default:0.005 },
+    tipOffset: { type:'number',   default:0.05 },
+    // New: which area bounds to respect (can be overridden per-hand)
+    area:      { type:'selector', default:'#paintingArea' },
+    // New: if true, refuse to start or continue outside the area
+    clipToArea:{ type:'boolean',  default:true }
   },
+
   init() {
     const THREE = AFRAME.THREE, d = this.data;
+
     this.points      = [];
     this.drawing     = false;
     this.currentMesh = null;
@@ -223,13 +230,15 @@ AFRAME.registerComponent('draw-line', {
 
     // tip indicator
     const geo = new THREE.SphereGeometry(d.thickness,16,16);
-    const mat = new THREE.MeshBasicMaterial({
-      color:d.color, transparent:true, opacity:0.5
-    });
+    const mat = new THREE.MeshBasicMaterial({ color:d.color, transparent:true, opacity:0.5 });
     this.indicator = new THREE.Mesh(geo,mat);
     this.indicator.frustumCulled = false;
     this.indicator.position.set(0,0,-d.tipOffset);
     this.el.object3D.add(this.indicator);
+
+    // scratch objects (avoid GC)
+    this._tmpWorld = new THREE.Vector3();
+    this._box      = new THREE.Box3();
 
     // bind handlers
     this._onTriggerDown = ()=>this.startLine();
@@ -242,11 +251,12 @@ AFRAME.registerComponent('draw-line', {
     // start with input off
     this.disableInput();
   },
+
   update(old) {
     const d = this.data, THREE = AFRAME.THREE;
     if (old.thickness!==d.thickness) {
       this.indicator.geometry.dispose();
-      this.indicator.geometry=new THREE.SphereGeometry(d.thickness,16,16);
+      this.indicator.geometry = new THREE.SphereGeometry(d.thickness,16,16);
     }
     if (old.color!==d.color) {
       this.indicator.material.color.set(d.color);
@@ -255,35 +265,71 @@ AFRAME.registerComponent('draw-line', {
       this.indicator.position.set(0,0,-d.tipOffset);
     }
   },
+
+  // --- helpers --------------------------------------------------------------
+  _tipWorldPosition(out) {
+    // indicator is parented to the controller; works even when invisible
+    this.indicator.getWorldPosition(out);
+    return out;
+  },
+  _tipInsideArea() {
+    if (!this.data.clipToArea) return true;
+    const areaEl = this.data.area;
+    if (!areaEl || !areaEl.object3D) return true; // fail-open
+    this._box.setFromObject(areaEl.object3D);
+    this._tipWorldPosition(this._tmpWorld);
+    return this._box.containsPoint(this._tmpWorld);
+  },
+
+  // --- drawing lifecycle ----------------------------------------------------
   startLine() {
+    // Don’t allow starting outside the area
+    if (!this._tipInsideArea()) return;
+
     this.drawing = true;
     this.points.length = 0;
     this.indicator.visible = false;
-    const mat=new AFRAME.THREE.MeshBasicMaterial({
+
+    const mat = new AFRAME.THREE.MeshBasicMaterial({
       color:this.data.color, side:AFRAME.THREE.FrontSide
     });
-    this.currentMesh=new AFRAME.THREE.Mesh(
+    this.currentMesh = new AFRAME.THREE.Mesh(
       new AFRAME.THREE.BufferGeometry(), mat
     );
     this.currentMesh.frustumCulled = false;
     this.el.sceneEl.object3D.add(this.currentMesh);
   },
+
   stopLine() {
+    if (!this.drawing) return;
+
     this.drawing = false;
     this.indicator.visible = true;
-    if (!this.points.length) return;
-    const capGeo=new AFRAME.THREE.SphereGeometry(this.data.thickness,8,8);
-    const capMat=new AFRAME.THREE.MeshBasicMaterial({color:this.data.color});
-    const startCap=new AFRAME.THREE.Mesh(capGeo,capMat);
-    const endCap  =new AFRAME.THREE.Mesh(capGeo,capMat);
+    if (!this.points.length) {
+      // clean up empty mesh if any
+      if (this.currentMesh) {
+        this.el.sceneEl.object3D.remove(this.currentMesh);
+        this.currentMesh.geometry.dispose();
+        this.currentMesh.material.dispose();
+      }
+      this.currentMesh = null;
+      return;
+    }
+
+    const capGeo = new AFRAME.THREE.SphereGeometry(this.data.thickness,8,8);
+    const capMat = new AFRAME.THREE.MeshBasicMaterial({color:this.data.color});
+    const startCap = new AFRAME.THREE.Mesh(capGeo,capMat);
+    const endCap   = new AFRAME.THREE.Mesh(capGeo,capMat);
     startCap.position.copy(this.points[0]);
     endCap.position.copy(this.points[this.points.length-1]);
     this.el.sceneEl.object3D.add(startCap,endCap);
-    this.drawn.push({tube:this.currentMesh, startCap, endCap});
-    this.currentMesh=null;
+
+    this.drawn.push({ tube:this.currentMesh, startCap, endCap });
+    this.currentMesh = null;
   },
+
   deleteLast() {
-    const last=this.drawn.pop();
+    const last = this.drawn.pop();
     if (!last) return;
     [last.tube, last.startCap, last.endCap].forEach(m=>{
       this.el.sceneEl.object3D.remove(m);
@@ -291,43 +337,76 @@ AFRAME.registerComponent('draw-line', {
       m.material.dispose();
     });
   },
+
   tick() {
-    if (!this.drawing || !this.currentMesh) return;
-    const pos=new AFRAME.THREE.Vector3();
-    this.indicator.getWorldPosition(pos);
-    const last=this.points[this.points.length-1];
-    if (!last || last.distanceTo(pos)>this.data.minDist) {
+    // If not currently drawing, nothing to update
+    if (!this.currentMesh) return;
+
+    // If we left the area mid-stroke, **stop immediately**
+    if (!this._tipInsideArea()) {
+      this.stopLine();
+      return;
+    }
+
+    // Continue building the tube while inside
+    const pos = this._tipWorldPosition(this._tmpWorld);
+    const last = this.points[this.points.length-1];
+
+    if (!last || last.distanceTo(pos) > this.data.minDist) {
       this.points.push(pos.clone());
-    } else return;
-    if (this.points.length<2) return;
-    const curve=new AFRAME.THREE.CatmullRomCurve3(this.points);
-    const segs=Math.max(this.points.length*4,16);
-    const geo=new AFRAME.THREE.TubeGeometry(curve,segs,this.data.thickness,8,false);
+    } else {
+      return;
+    }
+
+    if (this.points.length < 2) return;
+
+    const curve = new AFRAME.THREE.CatmullRomCurve3(this.points);
+    const segs  = Math.max(this.points.length*4, 16);
+    const geo   = new AFRAME.THREE.TubeGeometry(curve, segs, this.data.thickness, 8, false);
+
+    // replace geometry in-place
     this.currentMesh.geometry.dispose();
     this.currentMesh.geometry = geo;
     this.currentMesh.material.color.set(this.data.color);
   },
+
+  // --- input gating ---------------------------------------------------------
   disableInput() {
+    // If someone disables input mid-stroke, stop it cleanly.
+    if (this.drawing) this.stopLine();
+
     this.el.removeEventListener('triggerdown', this._onTriggerDown);
     this.el.removeEventListener('triggerup',   this._onTriggerUp);
-    this.el.sceneEl.canvas.removeEventListener('mousedown', this._onMouseDown);
+
+    const canvas = this.el.sceneEl && this.el.sceneEl.canvas;
+    if (canvas) {
+      canvas.removeEventListener('mousedown', this._onMouseDown);
+      canvas.removeEventListener('contextmenu', this._onContext);
+    }
     window.removeEventListener('mouseup', this._onMouseUp);
-    this.el.sceneEl.canvas.removeEventListener('contextmenu', this._onContext);
+
     this.el.removeEventListener('abuttondown', this._onDelete);
     this.el.removeEventListener('xbuttondown', this._onDelete);
     this.indicator.visible = false;
   },
+
   enableInput() {
     this.el.addEventListener('triggerdown', this._onTriggerDown);
     this.el.addEventListener('triggerup',   this._onTriggerUp);
-    this.el.sceneEl.canvas.addEventListener('mousedown', this._onMouseDown);
+
+    const canvas = this.el.sceneEl && this.el.sceneEl.canvas;
+    if (canvas) {
+      canvas.addEventListener('mousedown', this._onMouseDown);
+      canvas.addEventListener('contextmenu', this._onContext);
+    }
     window.addEventListener('mouseup', this._onMouseUp);
-    this.el.sceneEl.canvas.addEventListener('contextmenu', this._onContext);
+
     this.el.addEventListener('abuttondown', this._onDelete);
     this.el.addEventListener('xbuttondown', this._onDelete);
     this.indicator.visible = true;
   }
 });
+
 
 
 // 4) SIZE-PICKER
