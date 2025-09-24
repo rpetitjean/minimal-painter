@@ -481,119 +481,160 @@ AFRAME.registerComponent('color-picker',{
 });
 
 AFRAME.registerComponent('oculus-thumbstick-controls', {
-    schema: {
-        acceleration: { default: 25 },
-        rigSelector: {default: "#rig"},
-        fly: { default: false },
-        controllerOriented: { default: false },
-        adAxis: {default: 'x', oneOf: ['x', 'y', 'z']},
-        wsAxis: {default: 'z', oneOf: ['x', 'y', 'z']},
-        enabled: {default: true},
-        adEnabled: {default: true},
-        adInverted: {default: false},
-        wsEnabled: {default: true},
-        wsInverted: {default: false}
-    },
-    init: function () {
-        this.easing = 1.1;
-        this.velocity = new THREE.Vector3(0, 0, 0);
-        this.tsData = new THREE.Vector2(0, 0);
+  schema: {
+    // Movement tuning
+    acceleration: { default: 25 },          // how quickly we accelerate
+    deadzone:     { default: 0.20 },        // thumbstick deadzone (0..1)
+    easing:       { default: 1.1 },         // higher = more damping
 
-        this.thumbstickMoved = this.thumbstickMoved.bind(this)
-        this.el.addEventListener('thumbstickmoved', this.thumbstickMoved);
-    },
-    update: function() {
-        this.rigElement = document.querySelector(this.data.rigSelector)
-    },
-    tick: function (time, delta) {
-        if (!this.el.sceneEl.is('vr-mode')) return;
-        var data = this.data;
-        var el = this.rigElement
-        var velocity = this.velocity;
-        //console.log("here", this.tsData, this.tsData.length())
-        if (!velocity[data.adAxis] && !velocity[data.wsAxis] && !this.tsData.length()) { return; }
+    // Axes (world axes on the rig)
+    adAxis: { default: 'x', oneOf: ['x','y','z'] },  // left/right
+    wsAxis: { default: 'z', oneOf: ['x','y','z'] },  // forward/back
 
-        // Update velocity.
-        delta = delta / 1000;
-        this.updateVelocity(delta);
+    // Feature toggles
+    enabled:      { default: true },
+    adEnabled:    { default: true },
+    adInverted:   { default: false },
+    wsEnabled:    { default: true },
+    wsInverted:   { default: false },
+    fly:          { default: false },            // if true, allow Y motion
+    onlyActiveBrush: { default: true },          // require active-brush on this hand
 
-        if (!velocity[data.adAxis] && !velocity[data.wsAxis]) { return; }
+    // Where to move (accepts either 'rig' or legacy 'rigSelector')
+    rig:         { default: '#rig' },
+    rigSelector: { default: '' } // legacy alias; if set, overrides rig
+  },
 
-        // Get movement vector and translate position.
-        el.object3D.position.add(this.getMovementVector(delta));
-    },
-    updateVelocity: function (delta) {
-        var acceleration;
-        var adAxis;
-        var adSign;
-        var data = this.data;
-        var velocity = this.velocity;
-        var wsAxis;
-        var wsSign;
-        const CLAMP_VELOCITY = 0.00001;
+  init: function () {
+    this.velocity = new THREE.Vector3(0, 0, 0);
+    this.tsData   = new THREE.Vector2(0, 0);
 
-        adAxis = data.adAxis;
-        wsAxis = data.wsAxis;
+    // helper: is this hand currently allowed to drive movement?
+    this._isActive = () => {
+      return this.data.enabled && (!this.data.onlyActiveBrush || this.el.hasAttribute('active-brush'));
+    };
 
-        // If FPS too low, reset velocity.
-        if (delta > 0.2) {
-            velocity[adAxis] = 0;
-            velocity[wsAxis] = 0;
-            return;
-        }
+    // Bind handlers
+    this.thumbstickMoved = this.thumbstickMoved.bind(this);
+    this.el.addEventListener('thumbstickmoved', this.thumbstickMoved);
+  },
 
-        // https://gamedev.stackexchange.com/questions/151383/frame-rate-independant-movement-with-acceleration
-        var scaledEasing = Math.pow(1 / this.easing, delta * 60);
-        // Velocity Easing.
-        if (velocity[adAxis] !== 0) {
-            velocity[adAxis] = velocity[adAxis] * scaledEasing;
-        }
-        if (velocity[wsAxis] !== 0) {
-            velocity[wsAxis] = velocity[wsAxis] * scaledEasing;
-        }
+  update: function () {
+    // Support both 'rig' (new) and 'rigSelector' (legacy) props.
+    const sel = this.data.rigSelector || this.data.rig || '#rig';
+    this.rigElement =
+      (sel && document.querySelector(sel)) ||
+      document.querySelector('#rig') ||
+      this.el.sceneEl; // ultra-fallback, shouldn't be needed
+  },
 
-        // Clamp velocity easing.
-        if (Math.abs(velocity[adAxis]) < CLAMP_VELOCITY) { velocity[adAxis] = 0; }
-        if (Math.abs(velocity[wsAxis]) < CLAMP_VELOCITY) { velocity[wsAxis] = 0; }
+  remove: function () {
+    this.el.removeEventListener('thumbstickmoved', this.thumbstickMoved);
+  },
 
-        if (!data.enabled) { return; }
+  thumbstickMoved: function (evt) {
+    const { deadzone, adEnabled, wsEnabled } = this.data;
 
-        // Update velocity using keys pressed.
-        acceleration = data.acceleration;
-        if (data.adEnabled && this.tsData.x) {
-            adSign = data.adInverted ? -1 : 1;
-            velocity[adAxis] += adSign * acceleration * this.tsData.x * delta; 
-        }
-        if (data.wsEnabled) {
-            wsSign = data.wsInverted ? -1 : 1;
-            velocity[wsAxis] += wsSign * acceleration * this.tsData.y * delta;
-        }
-    },
-    getMovementVector: (function () {
-        var directionVector = new THREE.Vector3(0, 0, 0);
-        var rotationEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+    // Read raw values
+    let x = evt.detail.x || 0;
+    let y = evt.detail.y || 0;
 
-        return function (delta) {
-            var rotation = this.el.sceneEl.camera.el.object3D.rotation
-            var velocity = this.velocity;
-            var xRotation;
+    // Deadzone: zero-out tiny inputs
+    const mag = Math.hypot(x, y);
+    if (mag < deadzone) { x = 0; y = 0; }
 
-            directionVector.copy(velocity);
-            directionVector.multiplyScalar(delta);
-            // Absolute.
-            if (!rotation) { return directionVector; }
-            xRotation = this.data.fly ? rotation.x : 0;
+    // Only capture input if this hand is the mover
+    if (!this._isActive()) return;
 
-            // Transform direction relative to heading.
-            rotationEuler.set(xRotation, rotation.y, 0);
-            directionVector.applyEuler(rotationEuler);
-            return directionVector;
-        };
-    })(),
-    thumbstickMoved: function (evt) {
-        this.tsData.set(evt.detail.x, evt.detail.y);
-    },
-    remove: function () {
-        this.el.removeEventListener('thumbstickmoved', this.thumbstickMoved);
+    // Respect axis enables
+    if (!adEnabled) x = 0;
+    if (!wsEnabled) y = 0;
+
+    // Store for tick
+    this.tsData.set(x, y);
+
+    // Swallow event so no other component (e.g. snap-turn) rotates the camera
+    if (evt.stopImmediatePropagation) evt.stopImmediatePropagation();
+    if (evt.stopPropagation)          evt.stopPropagation();
+    if (evt.preventDefault)           evt.preventDefault();
+  },
+
+  tick: function (time, deltaMs) {
+    if (!this._isActive()) return;
+    if (!this.rigElement)  return;
+    if (!this.el.sceneEl || !this.el.sceneEl.is('vr-mode')) return;
+
+    const delta = deltaMs / 1000;
+    if (delta > 0.2) {
+      // Too slow a frame → avoid physics explosions
+      this.velocity.set(0, 0, 0);
+      return;
     }
+
+    // Update velocity from thumbstick
+    this.updateVelocity(delta);
+
+    const d = this.data;
+    const v = this.velocity;
+
+    if (!v[d.adAxis] && !v[d.wsAxis]) return;
+
+    // Convert (x,z) velocity into camera-heading space, keep planar unless fly=true
+    const move = this.getMovementVector(delta);
+    if (!d.fly) move.y = 0;
+
+    // Apply translation to rig
+    this.rigElement.object3D.position.add(move);
+  },
+
+  updateVelocity: function (delta) {
+    const d = this.data;
+    const v = this.velocity;
+
+    // Easing/damping (frame-rate independent)
+    const scaledEasing = Math.pow(1 / (d.easing || 1.1), delta * 60);
+    v[d.adAxis] *= scaledEasing;
+    v[d.wsAxis] *= scaledEasing;
+
+    // Clamp near-zero to zero
+    const CLAMP = 0.00001;
+    if (Math.abs(v[d.adAxis]) < CLAMP) v[d.adAxis] = 0;
+    if (Math.abs(v[d.wsAxis]) < CLAMP) v[d.wsAxis] = 0;
+
+    if (!d.enabled) return;
+
+    // Accumulate acceleration from stick
+    if (this.tsData.x) {
+      const s = d.adInverted ? -1 : 1;
+      v[d.adAxis] += s * d.acceleration * this.tsData.x * delta;
+    }
+    if (this.tsData.y) {
+      const s = d.wsInverted ? -1 : 1;
+      v[d.wsAxis] += s * d.acceleration * this.tsData.y * delta;
+    }
+  },
+
+  // Rotate movement by camera yaw (NOT rotating the rig—just the vector)
+  getMovementVector: (function () {
+    const dir = new THREE.Vector3();
+    const rot = new THREE.Euler(0, 0, 0, 'YXZ');
+    return function (delta) {
+      const d = this.data;
+      const v = this.velocity;
+
+      dir.set(0, 0, 0);
+      dir[d.adAxis] = v[d.adAxis] * delta; // left/right
+      dir[d.wsAxis] = -v[d.wsAxis] * delta; // forward is negative Z stick by convention
+
+      // Use camera yaw to define "forward"
+      const cam = this.el.sceneEl && this.el.sceneEl.camera && this.el.sceneEl.camera.el;
+      const yaw = cam ? cam.object3D.rotation.y : 0;
+      const pitch = d.fly ? (cam ? cam.object3D.rotation.x : 0) : 0;
+
+      rot.set(pitch, yaw, 0);
+      dir.applyEuler(rot);
+      return dir;
+    };
+  })()
 });
+
