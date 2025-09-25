@@ -1,54 +1,88 @@
-// 1) PAINTING-AREA-CONTROLLER
+// 1) PAINTING-AREA-CONTROLLER (auto-release when outside area)
 AFRAME.registerComponent('painting-area-controller', {
   init() {
     this.area      = document.querySelector('#paintingArea');
     this.leftHand  = document.getElementById('left-hand');
     this.rightHand = document.getElementById('right-hand');
     this.inside    = false;
+
+    // scratch
+    this._rigPos = new THREE.Vector3();
+    this._box    = new THREE.Box3();
   },
+
   tick() {
-    if (!this.area.object3D) return;
-    const rigPos    = new THREE.Vector3();
-    this.el.object3D.getWorldPosition(rigPos);
-    const nowInside = new THREE.Box3()
+    if (!this.area || !this.area.object3D) return;
+
+    // Rig world position
+    this.el.object3D.getWorldPosition(this._rigPos);
+
+    // Inside?
+    const nowInside = this._box
       .setFromObject(this.area.object3D)
-      .containsPoint(rigPos);
+      .containsPoint(this._rigPos);
+
+    // While outside, force-stop any active stroke every frame.
+    if (!nowInside) this._forceReleaseBothHands();
+
+    // Handle enter/leave once
     if (nowInside === this.inside) return;
     this.inside = nowInside;
     if (nowInside) this.enablePainting();
     else           this.disablePainting();
   },
+
   enablePainting() {
     const painter = document.querySelector('[active-brush]');
+    if (!painter) return;
+
     const palette = (painter === this.leftHand) ? this.rightHand : this.leftHand;
     const dl      = painter.components['draw-line'];
 
     if (dl) {
-      // 1) color & show the sphere
       dl.indicator.material.color.set(dl.data.color);
       dl.indicator.visible = true;
-      // 2) enable drawing
       dl.enableInput();
     }
-
-    // 3) show the size‐picker on painter
     painter.setAttribute('size-picker','');
-    // 4) show the color‐picker on palette
-    palette.setAttribute('color-picker','');
+    if (palette) palette.setAttribute('color-picker','');
   },
+
   disablePainting() {
     const painter = document.querySelector('[active-brush]');
     const palette = (painter === this.leftHand) ? this.rightHand : this.leftHand;
-    const dl      = painter.components['draw-line'];
+    const dl      = painter && painter.components['draw-line'];
 
+    // End stroke on current painter if any
     if (dl) {
+      if (dl.drawing) dl.stopLine();
       dl.disableInput();
       dl.indicator.visible = false;
     }
-    painter.removeAttribute('size-picker');
-    palette.removeAttribute('color-picker');
+
+    if (painter) painter.removeAttribute('size-picker');
+    if (palette) palette.removeAttribute('color-picker');
+
+    // Extra safety: also stop the other hand (in case of desync)
+    this._forceReleaseBothHands();
+  },
+
+  // --- helper: finish the stroke on BOTH hands immediately ---
+  _forceReleaseBothHands() {
+    [this.leftHand, this.rightHand].forEach(hand => {
+      if (!hand) return;
+      const dl = hand.components && hand.components['draw-line'];
+      if (!dl) return;
+      if (dl.drawing) {
+        try { hand.emit('triggerup'); } catch(e) {}
+        dl.stopLine();
+        dl.drawing = false;
+        if (dl.indicator) dl.indicator.visible = false;
+      }
+    });
   }
 });
+
 
 AFRAME.registerComponent('paint-tool-reset', {
   init() {
