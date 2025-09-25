@@ -1,6 +1,5 @@
 
 // 1) PAINTING-AREA-CONTROLLER (updated to end strokes on exit)
-// PAINTING-AREA-CONTROLLER — hard-stop strokes when leaving area
 AFRAME.registerComponent('painting-area-controller', {
   init() {
     this.area      = document.querySelector('#paintingArea');
@@ -8,7 +7,7 @@ AFRAME.registerComponent('painting-area-controller', {
     this.rightHand = document.getElementById('right-hand');
     this.inside    = false;
 
-    // scratch objects
+    // Reuse objects to avoid allocations each frame
     this._rigPos = new THREE.Vector3();
     this._box    = new THREE.Box3();
   },
@@ -16,21 +15,19 @@ AFRAME.registerComponent('painting-area-controller', {
   tick() {
     if (!this.area || !this.area.object3D) return;
 
-    // Get rig world position (component is on #rig)
+    // Rig position (the component sits on #rig)
     this.el.object3D.getWorldPosition(this._rigPos);
 
-    // Test containment
-    const nowInside = this._box.setFromObject(this.area.object3D)
-                               .containsPoint(this._rigPos);
+    // Is rig inside the painting area’s bounds?
+    const nowInside = this._box
+      .setFromObject(this.area.object3D)
+      .containsPoint(this._rigPos);
 
-    // If we just left OR are outside, enforce a hard stop
-    if (!nowInside) this._hardStopStroke();
-
-    // Handle enter/leave transitions for UI + input
     if (nowInside === this.inside) return;
+
     this.inside = nowInside;
     if (nowInside) this.enablePainting();
-    else           this.disablePainting();
+    else           this.disablePainting();   // <- will hard-stop any active stroke
   },
 
   enablePainting() {
@@ -41,10 +38,14 @@ AFRAME.registerComponent('painting-area-controller', {
     const dl      = painter.components['draw-line'];
 
     if (dl) {
+      // refresh tip color + show tip
       dl.indicator.material.color.set(dl.data.color);
       dl.indicator.visible = true;
+      // allow input again
       dl.enableInput();
     }
+
+    // show UI
     painter.setAttribute('size-picker','');
     if (palette) palette.setAttribute('color-picker','');
   },
@@ -54,38 +55,18 @@ AFRAME.registerComponent('painting-area-controller', {
     const palette = (painter === this.leftHand) ? this.rightHand : this.leftHand;
     const dl      = painter && painter.components['draw-line'];
 
-    // End stroke + turn input off
     if (dl) {
+      // If a stroke is in progress, end it immediately so TubeGeometry stops updating.
       if (dl.drawing) dl.stopLine();
-      dl.disableInput();
-      dl.indicator.visible = false;
+      dl.disableInput();              // remove listeners
+      dl.indicator.visible = false;   // hide tip
     }
 
+    // hide UI
     if (painter) painter.removeAttribute('size-picker');
     if (palette) palette.removeAttribute('color-picker');
-  },
-
-  // --- helpers --------------------------------------------------------------
-
-  _hardStopStroke() {
-    // Treat as if trigger was released: emit event + call stopLine (double safety)
-    const painter = document.querySelector('[active-brush]');
-    if (!painter) return;
-
-    const dl = painter.components['draw-line'];
-    if (!dl) return;
-
-    if (dl.drawing) {
-      // Fire the same event draw-line listens to…
-      try { painter.emit('triggerup'); } catch(e) {}
-      // …and force stop in case a listener was removed.
-      dl.stopLine();
-      dl.drawing = false; // belt & suspenders
-      dl.indicator.visible = false;
-    }
   }
 });
-
 
 
 AFRAME.registerComponent('paint-tool-reset', {
@@ -225,10 +206,11 @@ AFRAME.registerComponent('hand-swapper', {
 });
 
 
+// 3) DRAW-LINE
 // 3) DRAW-LINE  (updated: auto-stop if tip leaves #paintingArea)
 AFRAME.registerComponent('draw-line', {
   schema: {
-    color:     { type:'color',    default:'#ffffffff' },
+    color:     { type:'color',    default:'#EF2D5E' },
     thickness: { type:'number',   default:0.02 },
     minDist:   { type:'number',   default:0.005 },
     tipOffset: { type:'number',   default:0.05 },
