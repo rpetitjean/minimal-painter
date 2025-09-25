@@ -1,73 +1,54 @@
-
-// 1) PAINTING-AREA-CONTROLLER (updated to end strokes on exit)
+// 1) PAINTING-AREA-CONTROLLER
 AFRAME.registerComponent('painting-area-controller', {
   init() {
     this.area      = document.querySelector('#paintingArea');
     this.leftHand  = document.getElementById('left-hand');
     this.rightHand = document.getElementById('right-hand');
     this.inside    = false;
-
-    // Reuse objects to avoid allocations each frame
-    this._rigPos = new THREE.Vector3();
-    this._box    = new THREE.Box3();
   },
-
   tick() {
-    if (!this.area || !this.area.object3D) return;
-
-    // Rig position (the component sits on #rig)
-    this.el.object3D.getWorldPosition(this._rigPos);
-
-    // Is rig inside the painting area’s bounds?
-    const nowInside = this._box
+    if (!this.area.object3D) return;
+    const rigPos    = new THREE.Vector3();
+    this.el.object3D.getWorldPosition(rigPos);
+    const nowInside = new THREE.Box3()
       .setFromObject(this.area.object3D)
-      .containsPoint(this._rigPos);
-
+      .containsPoint(rigPos);
     if (nowInside === this.inside) return;
-
     this.inside = nowInside;
     if (nowInside) this.enablePainting();
-    else           this.disablePainting();   // <- will hard-stop any active stroke
+    else           this.disablePainting();
   },
-
   enablePainting() {
     const painter = document.querySelector('[active-brush]');
-    if (!painter) return;
-
     const palette = (painter === this.leftHand) ? this.rightHand : this.leftHand;
     const dl      = painter.components['draw-line'];
 
     if (dl) {
-      // refresh tip color + show tip
+      // 1) color & show the sphere
       dl.indicator.material.color.set(dl.data.color);
       dl.indicator.visible = true;
-      // allow input again
+      // 2) enable drawing
       dl.enableInput();
     }
 
-    // show UI
+    // 3) show the size‐picker on painter
     painter.setAttribute('size-picker','');
-    if (palette) palette.setAttribute('color-picker','');
+    // 4) show the color‐picker on palette
+    palette.setAttribute('color-picker','');
   },
-
   disablePainting() {
     const painter = document.querySelector('[active-brush]');
     const palette = (painter === this.leftHand) ? this.rightHand : this.leftHand;
-    const dl      = painter && painter.components['draw-line'];
+    const dl      = painter.components['draw-line'];
 
     if (dl) {
-      // If a stroke is in progress, end it immediately so TubeGeometry stops updating.
-      if (dl.drawing) dl.stopLine();
-      dl.disableInput();              // remove listeners
-      dl.indicator.visible = false;   // hide tip
+      dl.disableInput();
+      dl.indicator.visible = false;
     }
-
-    // hide UI
-    if (painter) painter.removeAttribute('size-picker');
-    if (palette) palette.removeAttribute('color-picker');
+    painter.removeAttribute('size-picker');
+    palette.removeAttribute('color-picker');
   }
 });
-
 
 AFRAME.registerComponent('paint-tool-reset', {
   init() {
@@ -207,22 +188,15 @@ AFRAME.registerComponent('hand-swapper', {
 
 
 // 3) DRAW-LINE
-// 3) DRAW-LINE  (updated: auto-stop if tip leaves #paintingArea)
 AFRAME.registerComponent('draw-line', {
   schema: {
-    color:     { type:'color',    default:'#EF2D5E' },
-    thickness: { type:'number',   default:0.02 },
-    minDist:   { type:'number',   default:0.005 },
-    tipOffset: { type:'number',   default:0.05 },
-    // New: which area bounds to respect (can be overridden per-hand)
-    area:      { type:'selector', default:'#paintingArea' },
-    // New: if true, refuse to start or continue outside the area
-    clipToArea:{ type:'boolean',  default:true }
+    color:     { type:'color',  default:'#EF2D5E' },
+    thickness: { type:'number', default:0.02   },
+    minDist:   { type:'number', default:0.005  },
+    tipOffset: { type:'number', default:0.05   }
   },
-
   init() {
     const THREE = AFRAME.THREE, d = this.data;
-
     this.points      = [];
     this.drawing     = false;
     this.currentMesh = null;
@@ -230,15 +204,13 @@ AFRAME.registerComponent('draw-line', {
 
     // tip indicator
     const geo = new THREE.SphereGeometry(d.thickness,16,16);
-    const mat = new THREE.MeshBasicMaterial({ color:d.color, transparent:true, opacity:0.5 });
+    const mat = new THREE.MeshBasicMaterial({
+      color:d.color, transparent:true, opacity:0.5
+    });
     this.indicator = new THREE.Mesh(geo,mat);
     this.indicator.frustumCulled = false;
     this.indicator.position.set(0,0,-d.tipOffset);
     this.el.object3D.add(this.indicator);
-
-    // scratch objects (avoid GC)
-    this._tmpWorld = new THREE.Vector3();
-    this._box      = new THREE.Box3();
 
     // bind handlers
     this._onTriggerDown = ()=>this.startLine();
@@ -251,12 +223,11 @@ AFRAME.registerComponent('draw-line', {
     // start with input off
     this.disableInput();
   },
-
   update(old) {
     const d = this.data, THREE = AFRAME.THREE;
     if (old.thickness!==d.thickness) {
       this.indicator.geometry.dispose();
-      this.indicator.geometry = new THREE.SphereGeometry(d.thickness,16,16);
+      this.indicator.geometry=new THREE.SphereGeometry(d.thickness,16,16);
     }
     if (old.color!==d.color) {
       this.indicator.material.color.set(d.color);
@@ -265,71 +236,35 @@ AFRAME.registerComponent('draw-line', {
       this.indicator.position.set(0,0,-d.tipOffset);
     }
   },
-
-  // --- helpers --------------------------------------------------------------
-  _tipWorldPosition(out) {
-    // indicator is parented to the controller; works even when invisible
-    this.indicator.getWorldPosition(out);
-    return out;
-  },
-  _tipInsideArea() {
-    if (!this.data.clipToArea) return true;
-    const areaEl = this.data.area;
-    if (!areaEl || !areaEl.object3D) return true; // fail-open
-    this._box.setFromObject(areaEl.object3D);
-    this._tipWorldPosition(this._tmpWorld);
-    return this._box.containsPoint(this._tmpWorld);
-  },
-
-  // --- drawing lifecycle ----------------------------------------------------
   startLine() {
-    // Don’t allow starting outside the area
-    if (!this._tipInsideArea()) return;
-
     this.drawing = true;
     this.points.length = 0;
     this.indicator.visible = false;
-
-    const mat = new AFRAME.THREE.MeshBasicMaterial({
+    const mat=new AFRAME.THREE.MeshBasicMaterial({
       color:this.data.color, side:AFRAME.THREE.FrontSide
     });
-    this.currentMesh = new AFRAME.THREE.Mesh(
+    this.currentMesh=new AFRAME.THREE.Mesh(
       new AFRAME.THREE.BufferGeometry(), mat
     );
     this.currentMesh.frustumCulled = false;
     this.el.sceneEl.object3D.add(this.currentMesh);
   },
-
   stopLine() {
-    if (!this.drawing) return;
-
     this.drawing = false;
     this.indicator.visible = true;
-    if (!this.points.length) {
-      // clean up empty mesh if any
-      if (this.currentMesh) {
-        this.el.sceneEl.object3D.remove(this.currentMesh);
-        this.currentMesh.geometry.dispose();
-        this.currentMesh.material.dispose();
-      }
-      this.currentMesh = null;
-      return;
-    }
-
-    const capGeo = new AFRAME.THREE.SphereGeometry(this.data.thickness,8,8);
-    const capMat = new AFRAME.THREE.MeshBasicMaterial({color:this.data.color});
-    const startCap = new AFRAME.THREE.Mesh(capGeo,capMat);
-    const endCap   = new AFRAME.THREE.Mesh(capGeo,capMat);
+    if (!this.points.length) return;
+    const capGeo=new AFRAME.THREE.SphereGeometry(this.data.thickness,8,8);
+    const capMat=new AFRAME.THREE.MeshBasicMaterial({color:this.data.color});
+    const startCap=new AFRAME.THREE.Mesh(capGeo,capMat);
+    const endCap  =new AFRAME.THREE.Mesh(capGeo,capMat);
     startCap.position.copy(this.points[0]);
     endCap.position.copy(this.points[this.points.length-1]);
     this.el.sceneEl.object3D.add(startCap,endCap);
-
-    this.drawn.push({ tube:this.currentMesh, startCap, endCap });
-    this.currentMesh = null;
+    this.drawn.push({tube:this.currentMesh, startCap, endCap});
+    this.currentMesh=null;
   },
-
   deleteLast() {
-    const last = this.drawn.pop();
+    const last=this.drawn.pop();
     if (!last) return;
     [last.tube, last.startCap, last.endCap].forEach(m=>{
       this.el.sceneEl.object3D.remove(m);
@@ -337,76 +272,43 @@ AFRAME.registerComponent('draw-line', {
       m.material.dispose();
     });
   },
-
   tick() {
-    // If not currently drawing, nothing to update
-    if (!this.currentMesh) return;
-
-    // If we left the area mid-stroke, **stop immediately**
-    if (!this._tipInsideArea()) {
-      this.stopLine();
-      return;
-    }
-
-    // Continue building the tube while inside
-    const pos = this._tipWorldPosition(this._tmpWorld);
-    const last = this.points[this.points.length-1];
-
-    if (!last || last.distanceTo(pos) > this.data.minDist) {
+    if (!this.drawing || !this.currentMesh) return;
+    const pos=new AFRAME.THREE.Vector3();
+    this.indicator.getWorldPosition(pos);
+    const last=this.points[this.points.length-1];
+    if (!last || last.distanceTo(pos)>this.data.minDist) {
       this.points.push(pos.clone());
-    } else {
-      return;
-    }
-
-    if (this.points.length < 2) return;
-
-    const curve = new AFRAME.THREE.CatmullRomCurve3(this.points);
-    const segs  = Math.max(this.points.length*4, 16);
-    const geo   = new AFRAME.THREE.TubeGeometry(curve, segs, this.data.thickness, 8, false);
-
-    // replace geometry in-place
+    } else return;
+    if (this.points.length<2) return;
+    const curve=new AFRAME.THREE.CatmullRomCurve3(this.points);
+    const segs=Math.max(this.points.length*4,16);
+    const geo=new AFRAME.THREE.TubeGeometry(curve,segs,this.data.thickness,8,false);
     this.currentMesh.geometry.dispose();
     this.currentMesh.geometry = geo;
     this.currentMesh.material.color.set(this.data.color);
   },
-
-  // --- input gating ---------------------------------------------------------
   disableInput() {
-    // If someone disables input mid-stroke, stop it cleanly.
-    if (this.drawing) this.stopLine();
-
     this.el.removeEventListener('triggerdown', this._onTriggerDown);
     this.el.removeEventListener('triggerup',   this._onTriggerUp);
-
-    const canvas = this.el.sceneEl && this.el.sceneEl.canvas;
-    if (canvas) {
-      canvas.removeEventListener('mousedown', this._onMouseDown);
-      canvas.removeEventListener('contextmenu', this._onContext);
-    }
+    this.el.sceneEl.canvas.removeEventListener('mousedown', this._onMouseDown);
     window.removeEventListener('mouseup', this._onMouseUp);
-
+    this.el.sceneEl.canvas.removeEventListener('contextmenu', this._onContext);
     this.el.removeEventListener('abuttondown', this._onDelete);
     this.el.removeEventListener('xbuttondown', this._onDelete);
     this.indicator.visible = false;
   },
-
   enableInput() {
     this.el.addEventListener('triggerdown', this._onTriggerDown);
     this.el.addEventListener('triggerup',   this._onTriggerUp);
-
-    const canvas = this.el.sceneEl && this.el.sceneEl.canvas;
-    if (canvas) {
-      canvas.addEventListener('mousedown', this._onMouseDown);
-      canvas.addEventListener('contextmenu', this._onContext);
-    }
+    this.el.sceneEl.canvas.addEventListener('mousedown', this._onMouseDown);
     window.addEventListener('mouseup', this._onMouseUp);
-
+    this.el.sceneEl.canvas.addEventListener('contextmenu', this._onContext);
     this.el.addEventListener('abuttondown', this._onDelete);
     this.el.addEventListener('xbuttondown', this._onDelete);
     this.indicator.visible = true;
   }
 });
-
 
 
 // 4) SIZE-PICKER
@@ -578,159 +480,119 @@ AFRAME.registerComponent('color-picker',{
 });
 
 AFRAME.registerComponent('oculus-thumbstick-controls', {
-  schema: {
-    // Movement tuning
-    acceleration: { default: 25 },          // how quickly we accelerate
-    deadzone:     { default: 0.20 },        // thumbstick deadzone (0..1)
-    easing:       { default: 1.1 },         // higher = more damping
+    schema: {
+        acceleration: { default: 25 },
+        rigSelector: {default: "#rig"},
+        fly: { default: false },
+        controllerOriented: { default: false },
+        adAxis: {default: 'x', oneOf: ['x', 'y', 'z']},
+        wsAxis: {default: 'z', oneOf: ['x', 'y', 'z']},
+        enabled: {default: true},
+        adEnabled: {default: true},
+        adInverted: {default: false},
+        wsEnabled: {default: true},
+        wsInverted: {default: false}
+    },
+    init: function () {
+        this.easing = 1.1;
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.tsData = new THREE.Vector2(0, 0);
 
-    // Axes (world axes on the rig)
-    adAxis: { default: 'x', oneOf: ['x','y','z'] },  // left/right
-    wsAxis: { default: 'z', oneOf: ['x','y','z'] },  // forward/back
+        this.thumbstickMoved = this.thumbstickMoved.bind(this)
+        this.el.addEventListener('thumbstickmoved', this.thumbstickMoved);
+    },
+    update: function() {
+        this.rigElement = document.querySelector(this.data.rigSelector)
+    },
+    tick: function (time, delta) {
+        if (!this.el.sceneEl.is('vr-mode')) return;
+        var data = this.data;
+        var el = this.rigElement
+        var velocity = this.velocity;
+        //console.log("here", this.tsData, this.tsData.length())
+        if (!velocity[data.adAxis] && !velocity[data.wsAxis] && !this.tsData.length()) { return; }
 
-    // Feature toggles
-    enabled:      { default: true },
-    adEnabled:    { default: true },
-    adInverted:   { default: false },
-    wsEnabled:    { default: true },
-    wsInverted:   { default: false },
-    fly:          { default: false },            // if true, allow Y motion
-    onlyActiveBrush: { default: true },          // require active-brush on this hand
+        // Update velocity.
+        delta = delta / 1000;
+        this.updateVelocity(delta);
 
-    // Where to move (accepts either 'rig' or legacy 'rigSelector')
-    rig:         { default: '#rig' },
-    rigSelector: { default: '' } // legacy alias; if set, overrides rig
-  },
+        if (!velocity[data.adAxis] && !velocity[data.wsAxis]) { return; }
 
-  init: function () {
-    this.velocity = new THREE.Vector3(0, 0, 0);
-    this.tsData   = new THREE.Vector2(0, 0);
+        // Get movement vector and translate position.
+        el.object3D.position.add(this.getMovementVector(delta));
+    },
+    updateVelocity: function (delta) {
+        var acceleration;
+        var adAxis;
+        var adSign;
+        var data = this.data;
+        var velocity = this.velocity;
+        var wsAxis;
+        var wsSign;
+        const CLAMP_VELOCITY = 0.00001;
 
-    // helper: is this hand currently allowed to drive movement?
-    this._isActive = () => {
-      return this.data.enabled && (!this.data.onlyActiveBrush || this.el.hasAttribute('active-brush'));
-    };
+        adAxis = data.adAxis;
+        wsAxis = data.wsAxis;
 
-    // Bind handlers
-    this.thumbstickMoved = this.thumbstickMoved.bind(this);
-    this.el.addEventListener('thumbstickmoved', this.thumbstickMoved);
-  },
+        // If FPS too low, reset velocity.
+        if (delta > 0.2) {
+            velocity[adAxis] = 0;
+            velocity[wsAxis] = 0;
+            return;
+        }
 
-  update: function () {
-    // Support both 'rig' (new) and 'rigSelector' (legacy) props.
-    const sel = this.data.rigSelector || this.data.rig || '#rig';
-    this.rigElement =
-      (sel && document.querySelector(sel)) ||
-      document.querySelector('#rig') ||
-      this.el.sceneEl; // ultra-fallback, shouldn't be needed
-  },
+        // https://gamedev.stackexchange.com/questions/151383/frame-rate-independant-movement-with-acceleration
+        var scaledEasing = Math.pow(1 / this.easing, delta * 60);
+        // Velocity Easing.
+        if (velocity[adAxis] !== 0) {
+            velocity[adAxis] = velocity[adAxis] * scaledEasing;
+        }
+        if (velocity[wsAxis] !== 0) {
+            velocity[wsAxis] = velocity[wsAxis] * scaledEasing;
+        }
 
-  remove: function () {
-    this.el.removeEventListener('thumbstickmoved', this.thumbstickMoved);
-  },
+        // Clamp velocity easing.
+        if (Math.abs(velocity[adAxis]) < CLAMP_VELOCITY) { velocity[adAxis] = 0; }
+        if (Math.abs(velocity[wsAxis]) < CLAMP_VELOCITY) { velocity[wsAxis] = 0; }
 
-  thumbstickMoved: function (evt) {
-    const { deadzone, adEnabled, wsEnabled } = this.data;
+        if (!data.enabled) { return; }
 
-    // Read raw values
-    let x = evt.detail.x || 0;
-    let y = evt.detail.y || 0;
+        // Update velocity using keys pressed.
+        acceleration = data.acceleration;
+        if (data.adEnabled && this.tsData.x) {
+            adSign = data.adInverted ? -1 : 1;
+            velocity[adAxis] += adSign * acceleration * this.tsData.x * delta; 
+        }
+        if (data.wsEnabled) {
+            wsSign = data.wsInverted ? -1 : 1;
+            velocity[wsAxis] += wsSign * acceleration * this.tsData.y * delta;
+        }
+    },
+    getMovementVector: (function () {
+        var directionVector = new THREE.Vector3(0, 0, 0);
+        var rotationEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 
-    // Deadzone: zero-out tiny inputs
-    const mag = Math.hypot(x, y);
-    if (mag < deadzone) { x = 0; y = 0; }
+        return function (delta) {
+            var rotation = this.el.sceneEl.camera.el.object3D.rotation
+            var velocity = this.velocity;
+            var xRotation;
 
-    // Only capture input if this hand is the mover
-    if (!this._isActive()) return;
+            directionVector.copy(velocity);
+            directionVector.multiplyScalar(delta);
+            // Absolute.
+            if (!rotation) { return directionVector; }
+            xRotation = this.data.fly ? rotation.x : 0;
 
-    // Respect axis enables
-    if (!adEnabled) x = 0;
-    if (!wsEnabled) y = 0;
-
-    // Store for tick
-    this.tsData.set(x, y);
-
-    // Swallow event so no other component (e.g. snap-turn) rotates the camera
-    if (evt.stopImmediatePropagation) evt.stopImmediatePropagation();
-    if (evt.stopPropagation)          evt.stopPropagation();
-    if (evt.preventDefault)           evt.preventDefault();
-  },
-
-  tick: function (time, deltaMs) {
-    if (!this._isActive()) return;
-    if (!this.rigElement)  return;
-    if (!this.el.sceneEl || !this.el.sceneEl.is('vr-mode')) return;
-
-    const delta = deltaMs / 1000;
-    if (delta > 0.2) {
-      // Too slow a frame → avoid physics explosions
-      this.velocity.set(0, 0, 0);
-      return;
+            // Transform direction relative to heading.
+            rotationEuler.set(xRotation, rotation.y, 0);
+            directionVector.applyEuler(rotationEuler);
+            return directionVector;
+        };
+    })(),
+    thumbstickMoved: function (evt) {
+        this.tsData.set(evt.detail.x, evt.detail.y);
+    },
+    remove: function () {
+        this.el.removeEventListener('thumbstickmoved', this.thumbstickMoved);
     }
-
-    // Update velocity from thumbstick
-    this.updateVelocity(delta);
-
-    const d = this.data;
-    const v = this.velocity;
-
-    if (!v[d.adAxis] && !v[d.wsAxis]) return;
-
-    // Convert (x,z) velocity into camera-heading space, keep planar unless fly=true
-    const move = this.getMovementVector(delta);
-    if (!d.fly) move.y = 0;
-
-    // Apply translation to rig
-    this.rigElement.object3D.position.add(move);
-  },
-
-  updateVelocity: function (delta) {
-    const d = this.data;
-    const v = this.velocity;
-
-    // Easing/damping (frame-rate independent)
-    const scaledEasing = Math.pow(1 / (d.easing || 1.1), delta * 60);
-    v[d.adAxis] *= scaledEasing;
-    v[d.wsAxis] *= scaledEasing;
-
-    // Clamp near-zero to zero
-    const CLAMP = 0.00001;
-    if (Math.abs(v[d.adAxis]) < CLAMP) v[d.adAxis] = 0;
-    if (Math.abs(v[d.wsAxis]) < CLAMP) v[d.wsAxis] = 0;
-
-    if (!d.enabled) return;
-
-    // Accumulate acceleration from stick
-    if (this.tsData.x) {
-      const s = d.adInverted ? -1 : 1;
-      v[d.adAxis] += s * d.acceleration * this.tsData.x * delta;
-    }
-    if (this.tsData.y) {
-      const s = d.wsInverted ? -1 : 1;
-      v[d.wsAxis] += s * d.acceleration * this.tsData.y * delta;
-    }
-  },
-
-  // Rotate movement by camera yaw (NOT rotating the rig—just the vector)
-  getMovementVector: (function () {
-    const dir = new THREE.Vector3();
-    const rot = new THREE.Euler(0, 0, 0, 'YXZ');
-    return function (delta) {
-      const d = this.data;
-      const v = this.velocity;
-
-      dir.set(0, 0, 0);
-      dir[d.adAxis] = v[d.adAxis] * delta; // left/right
-      dir[d.wsAxis] = -v[d.wsAxis] * delta; // forward is negative Z stick by convention
-
-      // Use camera yaw to define "forward"
-      const cam = this.el.sceneEl && this.el.sceneEl.camera && this.el.sceneEl.camera.el;
-      const yaw = cam ? cam.object3D.rotation.y : 0;
-      const pitch = d.fly ? (cam ? cam.object3D.rotation.x : 0) : 0;
-
-      rot.set(pitch, yaw, 0);
-      dir.applyEuler(rot);
-      return dir;
-    };
-  })()
 });
