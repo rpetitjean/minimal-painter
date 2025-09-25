@@ -1,7 +1,14 @@
 // 1) PAINTING-AREA-CONTROLLER (auto-release when outside area)
+// PAINTING-AREA-CONTROLLER — supports multiple areas via class
 AFRAME.registerComponent('painting-area-controller', {
+  schema: {
+    // Use class .paintingArea by default. You can override:
+    // <a-entity painting-area-controller="areaSelector: .myZones">
+    areaSelector: { default: '.paintingArea' }
+  },
+
   init() {
-    this.area      = document.querySelector('#paintingArea');
+    this.areas     = Array.from(document.querySelectorAll(this.data.areaSelector));
     this.leftHand  = document.getElementById('left-hand');
     this.rightHand = document.getElementById('right-hand');
     this.inside    = false;
@@ -9,18 +16,29 @@ AFRAME.registerComponent('painting-area-controller', {
     // scratch
     this._rigPos = new THREE.Vector3();
     this._box    = new THREE.Box3();
+
+    if (!this.areas.length) {
+      console.warn('[painting-area-controller] No areas found for selector:', this.data.areaSelector);
+    }
   },
 
   tick() {
-    if (!this.area || !this.area.object3D) return;
+    if (!this.areas.length) return;
 
     // Rig world position
     this.el.object3D.getWorldPosition(this._rigPos);
 
-    // Inside?
-    const nowInside = this._box
-      .setFromObject(this.area.object3D)
-      .containsPoint(this._rigPos);
+    // Inside any area?
+    let nowInside = false;
+    for (let i = 0; i < this.areas.length; i++) {
+      const area = this.areas[i];
+      if (!area || !area.object3D) continue;
+      this._box.setFromObject(area.object3D);
+      if (this._box.containsPoint(this._rigPos)) {
+        nowInside = true;
+        break;
+      }
+    }
 
     // While outside, force-stop any active stroke every frame.
     if (!nowInside) this._forceReleaseBothHands();
@@ -239,7 +257,7 @@ AFRAME.registerComponent('draw-line', {
     // tip indicator
     const geo = new THREE.SphereGeometry(d.thickness,16,16);
     const mat = new THREE.MeshBasicMaterial({
-      color:d.color, transparent:true, opacity:0.5
+      color:d.color, transparent:true, opacity:1
     });
     this.indicator = new THREE.Mesh(geo,mat);
     this.indicator.frustumCulled = false;
@@ -429,7 +447,6 @@ AFRAME.registerComponent('color-picker',{
   _addPaletteModel(){
     const bg=document.createElement('a-entity');
     bg.setAttribute('gltf-model','Assets/Palette.glb');
-    bg.setAttribute('portal-effect','');
     bg.setAttribute('scale','0.15 0.15 0.15');
     bg.setAttribute('position','0 0 0.007');
     bg.setAttribute('rotation','-90 0 0');
@@ -456,7 +473,7 @@ AFRAME.registerComponent('color-picker',{
     ring.setAttribute('radius-inner',r*0.8);
     ring.setAttribute('radius-outer',r*1.2);
     ring.setAttribute('material','color:#fff;side:double');
-    ring.setAttribute('position','0 0 -0.01');
+    ring.setAttribute('position','0 0 0.01');
     this.container.appendChild(ring);
   },
   _findRow(idx){
