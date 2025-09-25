@@ -734,4 +734,3 @@ AFRAME.registerComponent('oculus-thumbstick-controls', {
     };
   })()
 });
-
