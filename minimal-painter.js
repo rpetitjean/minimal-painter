@@ -414,8 +414,8 @@ AFRAME.registerComponent('size-picker',{
   }
 });
 
-// 5) COLOR-PICKER (a-circle bg, faceDown + defaultColor + fixed UP/DOWN)
 // 5) COLOR-PICKER (starts ring on defaultColor reliably + correct UP/DOWN)
+// 5) COLOR-PICKER — start ring at top-left (index 0)
 AFRAME.registerComponent('color-picker',{
   schema:{
     colors:{ default:[
@@ -426,49 +426,47 @@ AFRAME.registerComponent('color-picker',{
       '#0000ff','#4000ff','#8000ff','#bf00ff',
       '#ff00ff','#ff00bf','#ff0080','#ff0040'
     ]},
-    bgRadius:     { default: 0.11 },
-    bgColor:      { default: '#222' },
-    bgOpacity:    { default: 0.6 },
-    faceDown:     { default: true },
-    defaultColor: { default: '#ff0000' }, // can be "ff0000" or "#ff0000"
-    invertY:      { default: true }       // stick up -> visually up
+    bgRadius:  { default: 0.11 },
+    bgColor:   { default: '#222' },
+    bgOpacity: { default: 0.6 },
+    faceDown:  { default: true },   // palette faces floor by default
+    invertY:   { default: true }    // stick up -> visually up
   },
 
   init(){
+    // layout
     this.rowSizes=[2,4,6,6,4,2];
     this.rowStart=[0];
     this.rowSizes.forEach((sz,i)=>{ if(i>0) this.rowStart.push(this.rowStart[i-1]+this.rowSizes[i-1]); });
 
+    // state
     this.colors   = this.data.colors.slice(0, this.rowSizes.reduce((a,b)=>a+b,0));
-    this.selected = this._indexOfColor(this.data.defaultColor);
+    this.selected = 0;                 // <- always start at top-left
     this.canStep  = true;
     this.pressTh  = 0.5;
     this.releaseTh= 0.5;
     this.cellX=[]; this.cellY=[];
     this.ring = null;
 
+    // container
     this.container=document.createElement('a-entity');
     this.container.setAttribute('position','0 -0.05 -0.16');
     this.container.setAttribute('rotation', this.data.faceDown ? '-90 0 0' : '90 0 0');
     this.el.appendChild(this.container);
 
+    // build
     this._addPaletteBackground();
     this._buildPalette();
 
-    // Place the ring over the default color on the next frame (ensures mesh is ready)
-    requestAnimationFrame(()=> this._applyColor());
+    // place ring over top-left AFTER elements exist
+    const place = () => this._applyColor(true);
+    if (this.container.hasLoaded) place(); else this.container.addEventListener('loaded', place);
+    if (this.ring) { if (this.ring.hasLoaded) place(); else this.ring.addEventListener('loaded', place); }
+    requestAnimationFrame(place);
 
+    // input
     this.onThumb=this.onThumb.bind(this);
     this.el.addEventListener('thumbstickmoved', this.onThumb);
-  },
-
-  // Accepts "ff0000" or "#ff0000", any case
-  _indexOfColor(hex){
-    if (!hex) return 0;
-    let want = (''+hex).trim().toLowerCase();
-    if (want[0] !== '#') want = '#'+want;
-    const i = this.colors.findIndex(c => (c||'').toLowerCase() === want);
-    return i >= 0 ? i : 0;
   },
 
   _addPaletteBackground(){
@@ -484,9 +482,9 @@ AFRAME.registerComponent('color-picker',{
     const gap=0.03, r=0.015;
     let idx=0;
     this.rowSizes.forEach((count,row)=>{
-      const y=((this.rowSizes.length-1)/2-row)*gap;
+      const y=((this.rowSizes.length-1)/2-row)*gap; // top row first
       for(let col=0; col<count; col++, idx++){
-        const x=(col-(count-1)/2)*gap;
+        const x=(col-(count-1)/2)*gap;              // leftmost first
         this.cellX.push(x);
         this.cellY.push(y);
         const cell=document.createElement('a-circle');
@@ -501,17 +499,9 @@ AFRAME.registerComponent('color-picker',{
     ring.setAttribute('radius-inner', r*0.8);
     ring.setAttribute('radius-outer', r*1.2);
     ring.setAttribute('material', 'color:#fff; side:double');
-    ring.setAttribute('position', '0 0 0.01'); // gets moved in _applyColor()
+    ring.setAttribute('position', '0 0 0.01'); // will be moved in _applyColor
     this.container.appendChild(ring);
     this.ring = ring;
-  },
-
-  _findRow(idx){
-    for(let r=0;r<this.rowSizes.length;r++){
-      const start=this.rowStart[r];
-      if(idx<start+this.rowSizes[r]) return r;
-    }
-    return 0;
   },
 
   onThumb(evt){
@@ -522,15 +512,22 @@ AFRAME.registerComponent('color-picker',{
       if(Math.abs(x)<this.releaseTh && Math.abs(y)<this.releaseTh) this.canStep=true;
       return;
     }
-
-    if      (y >  this.pressTh) this._moveVert(-1); // up one row
-    else if (y < -this.pressTh) this._moveVert( 1); // down one row
+    if      (y >  this.pressTh) this._moveVert(-1); // UP a row
+    else if (y < -this.pressTh) this._moveVert( 1); // DOWN a row
     else if (x >  this.pressTh) this._moveHoriz( 1);
     else if (x < -this.pressTh) this._moveHoriz(-1);
     else return;
 
-    this._applyColor();
+    this._applyColor(false);
     this.canStep=false;
+  },
+
+  _findRow(idx){
+    for(let r=0;r<this.rowSizes.length;r++){
+      const start=this.rowStart[r];
+      if(idx<start+this.rowSizes[r]) return r;
+    }
+    return 0;
   },
 
   _moveHoriz(dir){
@@ -551,11 +548,16 @@ AFRAME.registerComponent('color-picker',{
     this.selected = this.rowStart[nr] + newCol;
   },
 
-  _applyColor(){
+  _applyColor(initial=false){
     if (!this.ring) return;
-    const x = this.cellX[this.selected] || 0;
-    const y = this.cellY[this.selected] || 0;
+    const x = this.cellX[this.selected] ?? 0;
+    const y = this.cellY[this.selected] ?? 0;
+
+    // Move ring now
     this.ring.setAttribute('position', `${x} ${y} 0.01`);
+    if (this.ring.object3D) this.ring.object3D.position.set(x, y, 0.01);
+
+    // Also set brush color to the selected swatch
     const brush=document.querySelector('[active-brush]');
     if (brush) brush.setAttribute('draw-line','color', this.colors[this.selected]);
   },
@@ -565,6 +567,7 @@ AFRAME.registerComponent('color-picker',{
     this.container.remove();
   }
 });
+
 
 AFRAME.registerComponent('oculus-thumbstick-controls', {
     schema: {
