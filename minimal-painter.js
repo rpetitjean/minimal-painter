@@ -413,17 +413,23 @@ AFRAME.registerComponent('size-picker',{
   }
 });
 
-
-// 5) COLOR-PICKER
+// 5) COLOR-PICKER (with a-circle background instead of Palette.glb)
 AFRAME.registerComponent('color-picker',{
-  schema:{ colors:{ default:[
-    '#ff0000','#ff4000','#ff8000','#ffbf00',
-    '#ffff00','#bfff00','#80ff00','#40ff00',
-    '#00ff00','#00ff40','#00ff80','#00ffbf',
-    '#00ffff','#00bfff','#0080ff','#0040ff',
-    '#0000ff','#4000ff','#8000ff','#bf00ff',
-    '#ff00ff','#ff00bf','#ff0080','#ff0040'
-  ]}},
+  schema:{
+    colors:{ default:[
+      '#ff0000','#ff4000','#ff8000','#ffbf00',
+      '#ffff00','#bfff00','#80ff00','#40ff00',
+      '#00ff00','#00ff40','#00ff80','#00ffbf',
+      '#00ffff','#00bfff','#0080ff','#0040ff',
+      '#0000ff','#4000ff','#8000ff','#bf00ff',
+      '#ff00ff','#ff00bf','#ff0080','#ff0040'
+    ]},
+    // Optional tuning for the circular background:
+    bgRadius:  { default: 0.11 },          // fits your 6x rows layout
+    bgColor:   { default: '#222' },
+    bgOpacity: { default: 0.6 }
+  },
+
   init(){
     this.rowSizes=[2,4,6,6,4,2];
     this.rowStart=[0];
@@ -434,24 +440,33 @@ AFRAME.registerComponent('color-picker',{
     this.selected=0; this.canStep=true;
     this.pressTh=0.5; this.releaseTh=0.5;
     this.cellX=[]; this.cellY=[];
+
     this.container=document.createElement('a-entity');
     this.container.setAttribute('rotation','90 0 0');
     this.container.setAttribute('position','0 -0.05 -0.16');
     this.el.appendChild(this.container);
-    this._addPaletteModel();
+
+    this._addPaletteBackground(); // <-- circle background
     this._buildPalette();
     this._applyColor();
+
     this.onThumb=this.onThumb.bind(this);
     this.el.addEventListener('thumbstickmoved', this.onThumb);
   },
-  _addPaletteModel(){
-    const bg=document.createElement('a-entity');
-    bg.setAttribute('gltf-model','Assets/Palette.glb');
-    bg.setAttribute('scale','0.15 0.15 0.15');
-    bg.setAttribute('position','0 0 0.007');
-    bg.setAttribute('rotation','-90 0 0');
+
+  // Replaces the old GLB model with a double-sided circle
+  _addPaletteBackground(){
+    const bg=document.createElement('a-circle');
+    bg.setAttribute('radius', this.data.bgRadius);
+    bg.setAttribute('segments', 64);
+    bg.setAttribute(
+      'material',
+      `color:${this.data.bgColor}; opacity:${this.data.bgOpacity}; transparent:true; side:double`
+    );
+    bg.setAttribute('position','0 0 -0.01'); // behind the color cells (z<0)
     this.container.appendChild(bg);
   },
+
   _buildPalette(){
     const gap=0.03, r=0.015;
     let idx=0;
@@ -473,9 +488,10 @@ AFRAME.registerComponent('color-picker',{
     ring.setAttribute('radius-inner',r*0.8);
     ring.setAttribute('radius-outer',r*1.2);
     ring.setAttribute('material','color:#fff;side:double');
-    ring.setAttribute('position','0 0 0.01');
+    ring.setAttribute('position','0 0 0.01'); // in front of cells (z>0)
     this.container.appendChild(ring);
   },
+
   _findRow(idx){
     for(let r=0;r<this.rowSizes.length;r++){
       const start=this.rowStart[r];
@@ -483,6 +499,7 @@ AFRAME.registerComponent('color-picker',{
     }
     return 0;
   },
+
   onThumb(evt){
     const x=evt.detail.x, y=evt.detail.y;
     if(!this.canStep){
@@ -498,12 +515,14 @@ AFRAME.registerComponent('color-picker',{
     this._applyColor();
     this.canStep=false;
   },
+
   _moveHoriz(dir){
     const r=this._findRow(this.selected);
     const start=this.rowStart[r], sz=this.rowSizes[r];
     const col=this.selected-start;
     this.selected = start + ((col+dir+sz)%sz);
   },
+
   _moveVert(dir){
     const r=this._findRow(this.selected);
     const start=this.rowStart[r], sz=this.rowSizes[r];
@@ -514,6 +533,7 @@ AFRAME.registerComponent('color-picker',{
     const newCol=Math.round(frac*(nsz-1));
     this.selected = this.rowStart[nr] + newCol;
   },
+
   _applyColor(){
     const ring=this.container.querySelector('a-ring');
     ring.object3D.position.set(
@@ -524,11 +544,13 @@ AFRAME.registerComponent('color-picker',{
     const brush=document.querySelector('[active-brush]');
     if (brush) brush.setAttribute('draw-line','color',this.colors[this.selected]);
   },
+
   remove(){
     this.el.removeEventListener('thumbstickmoved', this.onThumb);
     this.container.remove();
   }
 });
+
 
 AFRAME.registerComponent('oculus-thumbstick-controls', {
     schema: {
