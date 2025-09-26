@@ -415,6 +415,7 @@ AFRAME.registerComponent('size-picker',{
 });
 
 // 5) COLOR-PICKER (a-circle bg, faceDown + defaultColor + fixed UP/DOWN)
+// 5) COLOR-PICKER (starts ring on defaultColor reliably + correct UP/DOWN)
 AFRAME.registerComponent('color-picker',{
   schema:{
     colors:{ default:[
@@ -428,9 +429,9 @@ AFRAME.registerComponent('color-picker',{
     bgRadius:     { default: 0.11 },
     bgColor:      { default: '#222' },
     bgOpacity:    { default: 0.6 },
-    faceDown:     { default: true },          // palette faces floor by default
-    defaultColor: { default: '#ff0000' },     // ring starts here on awake
-    invertY:      { default: true }           // stick up -> move up (set false if you flip orientation)
+    faceDown:     { default: true },
+    defaultColor: { default: '#ff0000' }, // can be "ff0000" or "#ff0000"
+    invertY:      { default: true }       // stick up -> visually up
   },
 
   init(){
@@ -439,11 +440,12 @@ AFRAME.registerComponent('color-picker',{
     this.rowSizes.forEach((sz,i)=>{ if(i>0) this.rowStart.push(this.rowStart[i-1]+this.rowSizes[i-1]); });
 
     this.colors   = this.data.colors.slice(0, this.rowSizes.reduce((a,b)=>a+b,0));
-    this.selected = this._indexOfColor(this.data.defaultColor);  // start on default color
+    this.selected = this._indexOfColor(this.data.defaultColor);
     this.canStep  = true;
     this.pressTh  = 0.5;
     this.releaseTh= 0.5;
     this.cellX=[]; this.cellY=[];
+    this.ring = null;
 
     this.container=document.createElement('a-entity');
     this.container.setAttribute('position','0 -0.05 -0.16');
@@ -452,14 +454,19 @@ AFRAME.registerComponent('color-picker',{
 
     this._addPaletteBackground();
     this._buildPalette();
-    this._applyColor(); // place the ring over the default color
+
+    // Place the ring over the default color on the next frame (ensures mesh is ready)
+    requestAnimationFrame(()=> this._applyColor());
 
     this.onThumb=this.onThumb.bind(this);
     this.el.addEventListener('thumbstickmoved', this.onThumb);
   },
 
+  // Accepts "ff0000" or "#ff0000", any case
   _indexOfColor(hex){
-    const want = (hex || '').toLowerCase();
+    if (!hex) return 0;
+    let want = (''+hex).trim().toLowerCase();
+    if (want[0] !== '#') want = '#'+want;
     const i = this.colors.findIndex(c => (c||'').toLowerCase() === want);
     return i >= 0 ? i : 0;
   },
@@ -494,8 +501,9 @@ AFRAME.registerComponent('color-picker',{
     ring.setAttribute('radius-inner', r*0.8);
     ring.setAttribute('radius-outer', r*1.2);
     ring.setAttribute('material', 'color:#fff; side:double');
-    ring.setAttribute('position', '0 0 0.01');
+    ring.setAttribute('position', '0 0 0.01'); // gets moved in _applyColor()
     this.container.appendChild(ring);
+    this.ring = ring;
   },
 
   _findRow(idx){
@@ -507,7 +515,6 @@ AFRAME.registerComponent('color-picker',{
   },
 
   onThumb(evt){
-    // Normalize stick so pushing UP moves the selection UP visually.
     const x = evt.detail.x;
     const y = this.data.invertY ? -evt.detail.y : evt.detail.y;
 
@@ -545,12 +552,10 @@ AFRAME.registerComponent('color-picker',{
   },
 
   _applyColor(){
-    const ring=this.container.querySelector('a-ring');
-    ring.object3D.position.set(
-      this.cellX[this.selected],
-      this.cellY[this.selected],
-      0.01
-    );
+    if (!this.ring) return;
+    const x = this.cellX[this.selected] || 0;
+    const y = this.cellY[this.selected] || 0;
+    this.ring.setAttribute('position', `${x} ${y} 0.01`);
     const brush=document.querySelector('[active-brush]');
     if (brush) brush.setAttribute('draw-line','color', this.colors[this.selected]);
   },
@@ -560,7 +565,6 @@ AFRAME.registerComponent('color-picker',{
     this.container.remove();
   }
 });
-
 
 AFRAME.registerComponent('oculus-thumbstick-controls', {
     schema: {
