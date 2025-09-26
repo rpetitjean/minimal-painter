@@ -1,9 +1,9 @@
+
+
 // 1) PAINTING-AREA-CONTROLLER (auto-release when outside area)
-// PAINTING-AREA-CONTROLLER — supports multiple areas via class
 AFRAME.registerComponent('painting-area-controller', {
   schema: {
-    // Use class .paintingArea by default. You can override:
-    // <a-entity painting-area-controller="areaSelector: .myZones">
+    // Use class .paintingArea by default. >
     areaSelector: { default: '.paintingArea' }
   },
 
@@ -28,7 +28,7 @@ AFRAME.registerComponent('painting-area-controller', {
     // Rig world position
     this.el.object3D.getWorldPosition(this._rigPos);
 
-    // Inside any area?
+   
     let nowInside = false;
     for (let i = 0; i < this.areas.length; i++) {
       const area = this.areas[i];
@@ -107,7 +107,8 @@ AFRAME.registerComponent('paint-tool-reset', {
     this.leftHand     = document.getElementById('left-hand');
     this.rightHand    = document.getElementById('right-hand');
     this.onGrip       = this.onGrip.bind(this);
-    // locomotion config (matches your HTML schema)
+
+    // locomotion config
     this.movementAttr = { rig: '#rig', speed: 0.2 };
     this.currentSide  = null;
 
@@ -413,7 +414,7 @@ AFRAME.registerComponent('size-picker',{
   }
 });
 
-// 5) COLOR-PICKER (with a-circle background instead of Palette.glb)
+// 5) COLOR-PICKER
 AFRAME.registerComponent('color-picker',{
   schema:{
     colors:{ default:[
@@ -424,29 +425,29 @@ AFRAME.registerComponent('color-picker',{
       '#0000ff','#4000ff','#8000ff','#bf00ff',
       '#ff00ff','#ff00bf','#ff0080','#ff0040'
     ]},
-    // Optional tuning for the circular background:
-    bgRadius:  { default: 0.11 },          // fits your 6x rows layout
+    bgRadius:  { default: 0.11 },
     bgColor:   { default: '#222' },
-    bgOpacity: { default: 0.6 }
+    bgOpacity: { default: 0.6 },
+    faceDown:  { default: true } // <- NEW: face the floor when true
   },
 
   init(){
     this.rowSizes=[2,4,6,6,4,2];
     this.rowStart=[0];
-    this.rowSizes.forEach((sz,i)=>{
-      if(i>0) this.rowStart.push(this.rowStart[i-1]+this.rowSizes[i-1]);
-    });
+    this.rowSizes.forEach((sz,i)=>{ if(i>0) this.rowStart.push(this.rowStart[i-1]+this.rowSizes[i-1]); });
     this.colors = this.data.colors.slice(0,this.rowSizes.reduce((a,b)=>a+b,0));
     this.selected=0; this.canStep=true;
     this.pressTh=0.5; this.releaseTh=0.5;
     this.cellX=[]; this.cellY=[];
 
     this.container=document.createElement('a-entity');
-    this.container.setAttribute('rotation','90 0 0');
+    // Position same as before
     this.container.setAttribute('position','0 -0.05 -0.16');
+    // Face the floor (down) by default. If you prefer up, set faceDown:false.
+    this.container.setAttribute('rotation', this.data.faceDown ? '-90 0 0' : '90 0 0');
     this.el.appendChild(this.container);
 
-    this._addPaletteBackground(); // <-- circle background
+    this._addPaletteBackground();
     this._buildPalette();
     this._applyColor();
 
@@ -454,16 +455,12 @@ AFRAME.registerComponent('color-picker',{
     this.el.addEventListener('thumbstickmoved', this.onThumb);
   },
 
-  // Replaces the old GLB model with a double-sided circle
   _addPaletteBackground(){
     const bg=document.createElement('a-circle');
     bg.setAttribute('radius', this.data.bgRadius);
     bg.setAttribute('segments', 64);
-    bg.setAttribute(
-      'material',
-      `color:${this.data.bgColor}; opacity:${this.data.bgOpacity}; transparent:true; side:double`
-    );
-    bg.setAttribute('position','0 0 -0.01'); // behind the color cells (z<0)
+    bg.setAttribute('material', `color:${this.data.bgColor}; opacity:${this.data.bgOpacity}; transparent:true; side:double`);
+    bg.setAttribute('position','0 0 -0.01'); // slight offset behind cells
     this.container.appendChild(bg);
   },
 
@@ -472,23 +469,23 @@ AFRAME.registerComponent('color-picker',{
     let idx=0;
     this.rowSizes.forEach((count,row)=>{
       const y=((this.rowSizes.length-1)/2-row)*gap;
-      for(let col=0;col<count;col++,idx++){
+      for(let col=0; col<count; col++, idx++){
         const x=(col-(count-1)/2)*gap;
         this.cellX.push(x);
         this.cellY.push(y);
         const cell=document.createElement('a-circle');
-        cell.setAttribute('radius',r);
-        cell.setAttribute('segments',16);
-        cell.setAttribute('material',`color:${this.colors[idx]};side:double`);
-        cell.setAttribute('position',`${x} ${y} 0`);
+        cell.setAttribute('radius', r);
+        cell.setAttribute('segments', 16);
+        cell.setAttribute('material', `color:${this.colors[idx]}; side:double`);
+        cell.setAttribute('position', `${x} ${y} 0`);
         this.container.appendChild(cell);
       }
     });
     const ring=document.createElement('a-ring');
-    ring.setAttribute('radius-inner',r*0.8);
-    ring.setAttribute('radius-outer',r*1.2);
-    ring.setAttribute('material','color:#fff;side:double');
-    ring.setAttribute('position','0 0 0.01'); // in front of cells (z>0)
+    ring.setAttribute('radius-inner', r*0.8);
+    ring.setAttribute('radius-outer', r*1.2);
+    ring.setAttribute('material', 'color:#fff; side:double');
+    ring.setAttribute('position', '0 0 0.01'); // hover above cells
     this.container.appendChild(ring);
   },
 
@@ -503,8 +500,7 @@ AFRAME.registerComponent('color-picker',{
   onThumb(evt){
     const x=evt.detail.x, y=evt.detail.y;
     if(!this.canStep){
-      if(Math.abs(x)<this.releaseTh && Math.abs(y)<this.releaseTh)
-        this.canStep=true;
+      if(Math.abs(x)<this.releaseTh && Math.abs(y)<this.releaseTh) this.canStep=true;
       return;
     }
     if      (y> this.pressTh) this._moveVert(-1);
@@ -527,7 +523,7 @@ AFRAME.registerComponent('color-picker',{
     const r=this._findRow(this.selected);
     const start=this.rowStart[r], sz=this.rowSizes[r];
     const col=this.selected-start;
-    const frac= sz>1? col/(sz-1) : 0;
+    const frac= sz>1 ? col/(sz-1) : 0;
     const nr=(r+dir+this.rowSizes.length)%this.rowSizes.length;
     const nsz=this.rowSizes[nr];
     const newCol=Math.round(frac*(nsz-1));
@@ -542,7 +538,7 @@ AFRAME.registerComponent('color-picker',{
       0.01
     );
     const brush=document.querySelector('[active-brush]');
-    if (brush) brush.setAttribute('draw-line','color',this.colors[this.selected]);
+    if (brush) brush.setAttribute('draw-line','color', this.colors[this.selected]);
   },
 
   remove(){
