@@ -365,25 +365,51 @@ AFRAME.registerComponent('draw-line', {
 
 
 // 4) SIZE-PICKER
+// 4) SIZE-PICKER  (adds button-hint planes on the active hand)
 AFRAME.registerComponent('size-picker',{
-  schema:{ sizes:{ default:[0.0025,0.005,0.01,0.02] }},
+  schema:{
+    sizes:{ default:[0.0025,0.005,0.01,0.02] },
+    // --- hint layout tuning (optional) ---
+    hintOffset:   { default: '-0.085 -0.055' }, // y z relative to hand (x=per-hint)
+    hintZ:        { default: 0.0 },             // local z offset inside hints root
+    hintGap:      { default: 0.05 },            // horizontal gap between left/right
+    hintSize:     { default: '0.045 0.02' },    // plane width height
+    hintBg:       { default: '#111' },
+    hintOpacity:  { default: 0.85 },
+    hintTextW:    { default: 1.4 }              // text width
+  },
+
   init(){
-    this.idx=0; this._buildUI(); this._highlight();
+    this.idx = 0;
+
+    // UI: the size rings (same as before)
+    this._buildUI();
+    this._highlight();
+
+    // NEW: button hints (A/B or X/Y + GRIP)
+    this._buildHints();
+
+    // input to cycle sizes
     this.onBtn = this.onBtn.bind(this);
-    ['bbuttondown','ybuttondown'].forEach(evt=>
+    ['bbuttondown','ybuttondown'].forEach(evt =>
       this.el.addEventListener(evt, this.onBtn)
     );
   },
+
+  // Cycle brush thickness
   onBtn(){
-    this.idx = (this.idx+1)%this.data.sizes.length;
+    this.idx = (this.idx+1) % this.data.sizes.length;
     this._highlight();
   },
+
+  // ------- UI rings (unchanged) -------
   _buildUI(){
     const radii=[0.0075,0.01,0.0125,0.015], gap=0.03;
     this.container=document.createElement('a-entity');
     this.container.setAttribute('position','0 -0.05 -0.055');
     this.container.setAttribute('rotation','90 0 0');
     this.el.appendChild(this.container);
+
     this.cells = radii.map((r,i)=>{
       const ring=document.createElement('a-ring');
       ring.setAttribute('radius-inner',r*0.8);
@@ -394,23 +420,67 @@ AFRAME.registerComponent('size-picker',{
       return ring;
     });
   },
+
   _highlight(){
     this.cells.forEach((ring,i)=> {
       ring.setAttribute(
         'material',
-        i===this.idx?'color:#FFF;side:double':'color:#888;side:double'
+        i===this.idx ? 'color:#FFF;side:double' : 'color:#888;side:double'
       );
     });
-    const t=this.data.sizes[this.idx];
-    // apply to whichever hand is marked active-brush
+    const t = this.data.sizes[this.idx];
     const brush = document.querySelector('[active-brush]');
-    if (brush) brush.setAttribute('draw-line','thickness',t);
+    if (brush) brush.setAttribute('draw-line','thickness', t);
   },
+
+  // ------- NEW: button hint planes -------
+  _buildHints(){
+    // Determine side (prefer meta-touch-controls hand if present)
+    const mtc   = this.el.getAttribute('meta-touch-controls');
+    const right = (mtc && mtc.hand === 'right') || /right/i.test(this.el.id||'');
+
+    // Labels per hand
+    const leftLabel  = right ? 'B' : 'Y';
+    const rightLabel = right ? 'A' : 'X';
+
+    // Hint root (rotated like the size UI, positioned a bit further down)
+    const [offY, offZ] = this.data.hintOffset.split(' ').map(parseFloat);
+    this.hintsRoot = document.createElement('a-entity');
+    this.hintsRoot.setAttribute('rotation','90 0 0');   // face up like the size UI
+    this.hintsRoot.object3D.position.set(0, offY, offZ);
+    this.el.appendChild(this.hintsRoot);
+
+    // Create 3 hints: left (B/Y), right (A/X), center (GRIP)
+    const gap = this.data.hintGap;
+    this._makeHintPlane(-gap, this.data.hintZ, leftLabel);
+    this._makeHintPlane( gap, this.data.hintZ, rightLabel);
+    this._makeHintPlane( 0.0, this.data.hintZ + 0.025, 'GRIP'); // a bit forward
+  },
+
+  _makeHintPlane(x, z, label){
+    const [w,h] = this.data.hintSize.split(' ').map(parseFloat);
+
+    const p = document.createElement('a-plane');
+    p.setAttribute('width',  w);
+    p.setAttribute('height', h);
+    p.setAttribute('material', `color:${this.data.hintBg}; opacity:${this.data.hintOpacity}; transparent:true; side:double`);
+    p.object3D.position.set(x, 0, z);
+
+    // text child
+    const t = document.createElement('a-entity');
+    t.setAttribute('text', `value:${label}; align:center; color:#fff; width:${this.data.hintTextW}`);
+    t.setAttribute('position', '0 0 0.001');
+    p.appendChild(t);
+
+    this.hintsRoot.appendChild(p);
+  },
+
   remove(){
-    ['bbuttondown','ybuttondown'].forEach(evt=>
-      this.el.removeEventListener(evt,this.onBtn)
+    ['bbuttondown','ybuttondown'].forEach(evt =>
+      this.el.removeEventListener(evt, this.onBtn)
     );
-    this.container.remove();
+    if (this.hintsRoot) this.hintsRoot.remove();
+    if (this.container) this.container.remove();
   }
 });
 
