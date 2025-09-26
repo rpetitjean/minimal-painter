@@ -414,7 +414,7 @@ AFRAME.registerComponent('size-picker',{
   }
 });
 
-// 5) COLOR-PICKER
+// 5) COLOR-PICKER (a-circle bg, faceDown + defaultColor + fixed UP/DOWN)
 AFRAME.registerComponent('color-picker',{
   schema:{
     colors:{ default:[
@@ -425,34 +425,43 @@ AFRAME.registerComponent('color-picker',{
       '#0000ff','#4000ff','#8000ff','#bf00ff',
       '#ff00ff','#ff00bf','#ff0080','#ff0040'
     ]},
-    bgRadius:  { default: 0.11 },
-    bgColor:   { default: '#222' },
-    bgOpacity: { default: 0.6 },
-    faceDown:  { default: true } // <- NEW: face the floor when true
+    bgRadius:     { default: 0.11 },
+    bgColor:      { default: '#222' },
+    bgOpacity:    { default: 0.6 },
+    faceDown:     { default: true },          // palette faces floor by default
+    defaultColor: { default: '#ff0000' },     // ring starts here on awake
+    invertY:      { default: true }           // stick up -> move up (set false if you flip orientation)
   },
 
   init(){
     this.rowSizes=[2,4,6,6,4,2];
     this.rowStart=[0];
     this.rowSizes.forEach((sz,i)=>{ if(i>0) this.rowStart.push(this.rowStart[i-1]+this.rowSizes[i-1]); });
-    this.colors = this.data.colors.slice(0,this.rowSizes.reduce((a,b)=>a+b,0));
-    this.selected=0; this.canStep=true;
-    this.pressTh=0.5; this.releaseTh=0.5;
+
+    this.colors   = this.data.colors.slice(0, this.rowSizes.reduce((a,b)=>a+b,0));
+    this.selected = this._indexOfColor(this.data.defaultColor);  // start on default color
+    this.canStep  = true;
+    this.pressTh  = 0.5;
+    this.releaseTh= 0.5;
     this.cellX=[]; this.cellY=[];
 
     this.container=document.createElement('a-entity');
-    // Position same as before
     this.container.setAttribute('position','0 -0.05 -0.16');
-    // Face the floor (down) by default. If you prefer up, set faceDown:false.
     this.container.setAttribute('rotation', this.data.faceDown ? '-90 0 0' : '90 0 0');
     this.el.appendChild(this.container);
 
     this._addPaletteBackground();
     this._buildPalette();
-    this._applyColor();
+    this._applyColor(); // place the ring over the default color
 
     this.onThumb=this.onThumb.bind(this);
     this.el.addEventListener('thumbstickmoved', this.onThumb);
+  },
+
+  _indexOfColor(hex){
+    const want = (hex || '').toLowerCase();
+    const i = this.colors.findIndex(c => (c||'').toLowerCase() === want);
+    return i >= 0 ? i : 0;
   },
 
   _addPaletteBackground(){
@@ -460,7 +469,7 @@ AFRAME.registerComponent('color-picker',{
     bg.setAttribute('radius', this.data.bgRadius);
     bg.setAttribute('segments', 64);
     bg.setAttribute('material', `color:${this.data.bgColor}; opacity:${this.data.bgOpacity}; transparent:true; side:double`);
-    bg.setAttribute('position','0 0 -0.01'); // slight offset behind cells
+    bg.setAttribute('position','0 0 -0.01');
     this.container.appendChild(bg);
   },
 
@@ -485,7 +494,7 @@ AFRAME.registerComponent('color-picker',{
     ring.setAttribute('radius-inner', r*0.8);
     ring.setAttribute('radius-outer', r*1.2);
     ring.setAttribute('material', 'color:#fff; side:double');
-    ring.setAttribute('position', '0 0 0.01'); // hover above cells
+    ring.setAttribute('position', '0 0 0.01');
     this.container.appendChild(ring);
   },
 
@@ -498,16 +507,21 @@ AFRAME.registerComponent('color-picker',{
   },
 
   onThumb(evt){
-    const x=evt.detail.x, y=evt.detail.y;
+    // Normalize stick so pushing UP moves the selection UP visually.
+    const x = evt.detail.x;
+    const y = this.data.invertY ? -evt.detail.y : evt.detail.y;
+
     if(!this.canStep){
       if(Math.abs(x)<this.releaseTh && Math.abs(y)<this.releaseTh) this.canStep=true;
       return;
     }
-    if      (y> this.pressTh) this._moveVert(-1);
-    else if (y< -this.pressTh) this._moveVert( 1);
-    else if (x> this.pressTh) this._moveHoriz( 1);
-    else if (x< -this.pressTh) this._moveHoriz(-1);
+
+    if      (y >  this.pressTh) this._moveVert(-1); // up one row
+    else if (y < -this.pressTh) this._moveVert( 1); // down one row
+    else if (x >  this.pressTh) this._moveHoriz( 1);
+    else if (x < -this.pressTh) this._moveHoriz(-1);
     else return;
+
     this._applyColor();
     this.canStep=false;
   },
