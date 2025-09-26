@@ -366,43 +366,70 @@ AFRAME.registerComponent('draw-line', {
 
 // 4) SIZE-PICKER
 // 4) SIZE-PICKER  (adds button-hint planes on the active hand)
+// 4) SIZE-PICKER — button hints snapped to Quest controller buttons
 AFRAME.registerComponent('size-picker',{
   schema:{
     sizes:{ default:[0.0025,0.005,0.01,0.02] },
-    // --- hint layout tuning (optional) ---
-    hintOffset:   { default: '-0.085 -0.055' }, // y z relative to hand (x=per-hint)
-    hintZ:        { default: 0.0 },             // local z offset inside hints root
-    hintGap:      { default: 0.05 },            // horizontal gap between left/right
-    hintSize:     { default: '0.045 0.02' },    // plane width height
+    // Hints styling
+    hintSize:     { default: '0.028 0.012' }, // w h
     hintBg:       { default: '#111' },
-    hintOpacity:  { default: 0.85 },
-    hintTextW:    { default: 1.4 }              // text width
+    hintOpacity:  { default: 0.9 },
+    hintTextW:    { default: 1.6 },
+    // Model anchoring
+    useModelAnchors: { default: true },
+    hintLift:        { default: 0.01 },  // how far above the button surface
+    billboardHints:  { default: true },  // face hints toward camera each frame
+    // Fallback offsets (meters, in controller local space)
+    // Right hand fallback
+    rA: { default: '0.021 0.035 -0.03' },
+    rB: { default: '-0.014 0.045 -0.03' },
+    rGrip: { default: '0 0.02 0.02' },
+    // Left hand fallback (mirrored)
+    lX: { default: '-0.021 0.035 -0.03' },
+    lY: { default: '0.014 0.045 -0.03' },
+    lGrip: { default: '0 0.02 0.02' }
   },
 
   init(){
+    // ---- size UI (unchanged) ----
     this.idx = 0;
-
-    // UI: the size rings (same as before)
     this._buildUI();
     this._highlight();
 
-    // NEW: button hints (A/B or X/Y + GRIP)
-    this._buildHints();
+    // ---- button hints ----
+    this._planes = [];
+    this._handSide = this._getHandSide(); // 'right' or 'left'
 
-    // input to cycle sizes
+    const ready = () => this._buildHints();
+    // build after model (if any) is loaded
+    if (this.el.hasLoaded) ready(); else this.el.addEventListener('loaded', ready);
+    this.el.addEventListener('model-loaded', () => this._rebuildHints());
+
+    // cycle sizes with B/Y as you had
     this.onBtn = this.onBtn.bind(this);
-    ['bbuttondown','ybuttondown'].forEach(evt =>
-      this.el.addEventListener(evt, this.onBtn)
-    );
+    ['bbuttondown','ybuttondown'].forEach(evt => this.el.addEventListener(evt, this.onBtn));
   },
 
-  // Cycle brush thickness
-  onBtn(){
-    this.idx = (this.idx+1) % this.data.sizes.length;
-    this._highlight();
+  remove(){
+    ['bbuttondown','ybuttondown'].forEach(evt => this.el.removeEventListener(evt, this.onBtn));
+    if (this.container) this.container.remove();
+    this._clearPlanes();
   },
 
-  // ------- UI rings (unchanged) -------
+  tick(){
+    if (!this.data.billboardHints || !this._planes.length) return;
+    const cam = this.el.sceneEl && this.el.sceneEl.camera && this.el.sceneEl.camera.el;
+    if (!cam || !cam.object3D) return;
+    const camPos = new THREE.Vector3();
+    cam.object3D.getWorldPosition(camPos);
+    this._planes.forEach(p => {
+      if (!p.object3D) return;
+      // Make the plane face the camera for readability
+      p.object3D.lookAt(camPos);
+    });
+  },
+
+  // ---------- size UI ----------
   _buildUI(){
     const radii=[0.0075,0.01,0.0125,0.015], gap=0.03;
     this.container=document.createElement('a-entity');
@@ -423,66 +450,130 @@ AFRAME.registerComponent('size-picker',{
 
   _highlight(){
     this.cells.forEach((ring,i)=> {
-      ring.setAttribute(
-        'material',
-        i===this.idx ? 'color:#FFF;side:double' : 'color:#888;side:double'
-      );
+      ring.setAttribute('material', i===this.idx ? 'color:#FFF;side:double' : 'color:#888;side:double');
     });
     const t = this.data.sizes[this.idx];
     const brush = document.querySelector('[active-brush]');
     if (brush) brush.setAttribute('draw-line','thickness', t);
   },
 
-  // ------- NEW: button hint planes -------
-  _buildHints(){
-    // Determine side (prefer meta-touch-controls hand if present)
-    const mtc   = this.el.getAttribute('meta-touch-controls');
-    const right = (mtc && mtc.hand === 'right') || /right/i.test(this.el.id||'');
-
-    // Labels per hand
-    const leftLabel  = right ? 'B' : 'Y';
-    const rightLabel = right ? 'A' : 'X';
-
-    // Hint root (rotated like the size UI, positioned a bit further down)
-    const [offY, offZ] = this.data.hintOffset.split(' ').map(parseFloat);
-    this.hintsRoot = document.createElement('a-entity');
-    this.hintsRoot.setAttribute('rotation','90 0 0');   // face up like the size UI
-    this.hintsRoot.object3D.position.set(0, offY, offZ);
-    this.el.appendChild(this.hintsRoot);
-
-    // Create 3 hints: left (B/Y), right (A/X), center (GRIP)
-    const gap = this.data.hintGap;
-    this._makeHintPlane(-gap, this.data.hintZ, leftLabel);
-    this._makeHintPlane( gap, this.data.hintZ, rightLabel);
-    this._makeHintPlane( 0.0, this.data.hintZ + 0.025, 'GRIP'); // a bit forward
+  onBtn(){
+    this.idx = (this.idx+1)%this.data.sizes.length;
+    this._highlight();
   },
 
-  _makeHintPlane(x, z, label){
-    const [w,h] = this.data.hintSize.split(' ').map(parseFloat);
+  // ---------- hints ----------
+  _rebuildHints(){
+    this._clearPlanes();
+    this._buildHints();
+  },
 
+  _clearPlanes(){
+    this._planes.forEach(p => p.remove());
+    this._planes.length = 0;
+  },
+
+  _buildHints(){
+    // Target labels per hand
+    const isRight = this._handSide === 'right';
+    const leftLabel  = isRight ? 'B' : 'Y';
+    const rightLabel = isRight ? 'A' : 'X';
+    const gripLabel  = 'GRIP';
+
+    // Try to attach to model button nodes
+    const aNode = this.data.useModelAnchors ? this._findButtonNode(isRight ? 'A' : 'X') : null;
+    const bNode = this.data.useModelAnchors ? this._findButtonNode(isRight ? 'B' : 'Y') : null;
+    const gNode = this.data.useModelAnchors ? this._findGripNode() : null;
+
+    // Create planes
+    const leftPlane  = this._makeHintPlane(leftLabel);
+    const rightPlane = this._makeHintPlane(rightLabel);
+    const gripPlane  = this._makeHintPlane(gripLabel);
+
+    // Attach or fallback-position them
+    if (aNode) this._attachAboveNode(rightPlane, aNode);
+    else       this._fallbackPos(rightPlane, isRight ? this.data.rA : this.data.lX);
+
+    if (bNode) this._attachAboveNode(leftPlane, bNode);
+    else       this._fallbackPos(leftPlane, isRight ? this.data.rB : this.data.lY);
+
+    if (gNode) this._attachAboveNode(gripPlane, gNode);
+    else       this._fallbackPos(gripPlane, isRight ? this.data.rGrip : this.data.lGrip);
+
+    // Keep refs for billboarding
+    this._planes.push(leftPlane, rightPlane, gripPlane);
+  },
+
+  _makeHintPlane(label){
+    const [w,h] = this.data.hintSize.split(' ').map(parseFloat);
     const p = document.createElement('a-plane');
     p.setAttribute('width',  w);
     p.setAttribute('height', h);
     p.setAttribute('material', `color:${this.data.hintBg}; opacity:${this.data.hintOpacity}; transparent:true; side:double`);
-    p.object3D.position.set(x, 0, z);
-
     // text child
     const t = document.createElement('a-entity');
     t.setAttribute('text', `value:${label}; align:center; color:#fff; width:${this.data.hintTextW}`);
     t.setAttribute('position', '0 0 0.001');
     p.appendChild(t);
-
-    this.hintsRoot.appendChild(p);
+    // attach to controller root by default
+    this.el.appendChild(p);
+    return p;
   },
 
-  remove(){
-    ['bbuttondown','ybuttondown'].forEach(evt =>
-      this.el.removeEventListener(evt, this.onBtn)
-    );
-    if (this.hintsRoot) this.hintsRoot.remove();
-    if (this.container) this.container.remove();
+  _attachAboveNode(plane, node){
+    // Parent to the node and lift slightly off the surface
+    node.add(plane.object3D);
+    plane.object3D.position.set(0, this.data.hintLift, 0);
+  },
+
+  _fallbackPos(plane, triplet){
+    const [x,y,z] = triplet.split(' ').map(parseFloat);
+    plane.object3D.position.set(x,y,z);
+    this.el.object3D.add(plane.object3D);
+  },
+
+  _getHandSide(){
+    const mtc = this.el.getAttribute('meta-touch-controls');
+    if (mtc && mtc.hand) return mtc.hand;
+    const id = (this.el.id||'').toLowerCase();
+    if (id.includes('right')) return 'right';
+    if (id.includes('left'))  return 'left';
+    // default to right
+    return 'right';
+  },
+
+  _findButtonNode(letter){
+    // Search GLTF nodes for common button names
+    const wanted = letter.toLowerCase(); // 'a','b','x','y'
+    const patterns = [
+      `button_${wanted}`, `${wanted}_button`, `button-${wanted}`, `button${wanted}`,
+      `${wanted}button`, `btn_${wanted}`, `btn-${wanted}`, `key_${wanted}`, `${wanted}`
+    ];
+    let hit = null;
+    if (!this.el.object3D) return null;
+    this.el.object3D.traverse(n=>{
+      if (hit || !n.name) return;
+      const name = n.name.toLowerCase().replace(/\s+/g,'');
+      // require 'button' if the name is a single letter to avoid false positives
+      const ok = patterns.some(p => name.includes(p)) ||
+                 (name.includes('button') && name.includes(wanted));
+      if (ok) hit = n;
+    });
+    return hit;
+    },
+
+  _findGripNode(){
+    let hit = null;
+    if (!this.el.object3D) return null;
+    this.el.object3D.traverse(n=>{
+      if (hit || !n.name) return;
+      const name = n.name.toLowerCase();
+      if (name.includes('grip') || name.includes('squeeze')) hit = n;
+    });
+    return hit;
   }
 });
+
 
 // 5) COLOR-PICKER (starts ring on defaultColor reliably + correct UP/DOWN)
 // 5) COLOR-PICKER — start ring at top-left (index 0)
