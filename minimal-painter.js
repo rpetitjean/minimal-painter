@@ -386,71 +386,33 @@ AFRAME.registerComponent('size-picker',{
   schema:{
     sizes:{ default:[0.0025,0.005,0.01,0.02] },
 
-    // Hint styling
-    hintSize:     { default: '0.028 0.012' }, // w h
-    hintBg:       { default: '#111' },
-    hintOpacity:  { default: 0.9 },
-    hintTextW:    { default: 1.6 },
+    // Rings UI orientation (same as before)
+    faceDown: { default: true },
 
-    // Placement behavior
-    useModelAnchors: { default: true },
-    billboardHints:  { default: true },
+    // Side hint config
+    hintText:       { default: 'B/Y: SIZE' }, // label text
+    hintSize:       { default: '0.10 0.035' }, // width height (meters)
+    hintBg:         { default: '#111' },
+    hintOpacity:    { default: 0.9 },
+    hintTextWidth:  { default: 2.4 },
+    billboardHint:  { default: true },  // make the hint face camera
 
-    // Lifts (meters): top buttons use Y, grip uses ±X (outward)
-    hintLiftTop:  { default: 0.005 }, // 0.5 cm above A/B/X/Y
-    hintLiftSide: { default: 0.005 }, // 0.5 cm out from grip side
-
-    // Fallback local-space positions (meters) if button nodes aren't found
-    // RIGHT HAND
-    rA:    { default: '0.021 0.035 -0.030' }, // near A
-    rB:    { default: '-0.014 0.045 -0.030' },// near B
-    rGrip: { default: '0.030 0.010 0.000' },  // side (outer, +X)
-    // LEFT HAND (mirrored)
-    lX:    { default: '-0.021 0.035 -0.030' },// near X
-    lY:    { default: '0.014 0.045 -0.030' }, // near Y
-    lGrip: { default: '-0.030 0.010 0.000' }  // side (outer, -X)
+    // Placement relative to controller local axes
+    outwardDist:    { default: 0.035 }, // ~3.5 cm outward (±X)
+    verticalOffset: { default: 0.012 }, // up (Y)
+    forwardOffset:  { default: 0.000 }  // forward (Z)
   },
 
   init(){
-    // --- size UI (as before) ---
     this.idx = 0;
-    this._buildUI();
-    this._highlight();
-
-    // --- button hints ---
     this._planes = [];
     this._handSide = this._getHandSide(); // 'right' | 'left'
 
-    const ready = () => this._buildHints();
-    if (this.el.hasLoaded) ready(); else this.el.addEventListener('loaded', ready);
-    this.el.addEventListener('model-loaded', () => this._rebuildHints());
-
-    // Cycle sizes with B / Y as before
-    this.onBtn = this.onBtn.bind(this);
-    ['bbuttondown','ybuttondown'].forEach(evt => this.el.addEventListener(evt, this.onBtn));
-  },
-
-  remove(){
-    ['bbuttondown','ybuttondown'].forEach(evt => this.el.removeEventListener(evt, this.onBtn));
-    if (this.container) this.container.remove();
-    this._clearPlanes();
-  },
-
-  tick(){
-    if (!this.data.billboardHints || !this._planes.length) return;
-    const cam = this.el.sceneEl && this.el.sceneEl.camera && this.el.sceneEl.camera.el;
-    if (!cam || !cam.object3D) return;
-    const camPos = new THREE.Vector3();
-    cam.object3D.getWorldPosition(camPos);
-    this._planes.forEach(p => p.object3D && p.object3D.lookAt(camPos));
-  },
-
-  // ---------- size UI ----------
-  _buildUI(){
+    // ---- size rings UI (unchanged) ----
     const radii=[0.0075,0.01,0.0125,0.015], gap=0.03;
     this.container=document.createElement('a-entity');
     this.container.setAttribute('position','0 -0.05 -0.055');
-    this.container.setAttribute('rotation','90 0 0');
+    this.container.setAttribute('rotation', this.data.faceDown ? '-90 0 0' : '90 0 0');
     this.el.appendChild(this.container);
 
     this.cells = radii.map((r,i)=>{
@@ -462,10 +424,39 @@ AFRAME.registerComponent('size-picker',{
       this.container.appendChild(ring);
       return ring;
     });
+    this._highlight();
+
+    // Cycle sizes with B/Y
+    this.onBtn = this.onBtn.bind(this);
+    ['bbuttondown','ybuttondown'].forEach(evt => this.el.addEventListener(evt, this.onBtn));
+
+    // ---- single side hint ----
+    this._buildSideHint();
+  },
+
+  remove(){
+    ['bbuttondown','ybuttondown'].forEach(evt => this.el.removeEventListener(evt, this.onBtn));
+    if (this.container) this.container.remove();
+    this._clearPlanes();
+  },
+
+  tick(){
+    if (!this.data.billboardHint || !this._planes.length) return;
+    const cam = this.el.sceneEl && this.el.sceneEl.camera && this.el.sceneEl.camera.el;
+    if (!cam || !cam.object3D) return;
+    const camPos = new THREE.Vector3();
+    cam.object3D.getWorldPosition(camPos);
+    this._planes.forEach(p => p.object3D && p.object3D.lookAt(camPos));
+  },
+
+  // ----- helpers -----
+  onBtn(){
+    this.idx = (this.idx+1) % this.data.sizes.length;
+    this._highlight();
   },
 
   _highlight(){
-    this.cells.forEach((ring,i)=> {
+    this.cells.forEach((ring,i)=>{
       ring.setAttribute('material', i===this.idx ? 'color:#FFF;side:double' : 'color:#888;side:double');
     });
     const t = this.data.sizes[this.idx];
@@ -473,87 +464,30 @@ AFRAME.registerComponent('size-picker',{
     if (brush) brush.setAttribute('draw-line','thickness', t);
   },
 
-  onBtn(){
-    this.idx = (this.idx+1)%this.data.sizes.length;
-    this._highlight();
-  },
+  _buildSideHint(){
+    const [w,h] = this.data.hintSize.split(' ').map(parseFloat);
+    const plane = document.createElement('a-plane');
+    plane.setAttribute('width',  w);
+    plane.setAttribute('height', h);
+    plane.setAttribute('material', `color:${this.data.hintBg}; opacity:${this.data.hintOpacity}; transparent:true; side:double`);
 
-  // ---------- hints ----------
-  _rebuildHints(){
-    this._clearPlanes();
-    this._buildHints();
+    const label = document.createElement('a-entity');
+    label.setAttribute('text', `value:${this.data.hintText}; align:center; color:#fff; width:${this.data.hintTextWidth}`);
+    label.setAttribute('position','0 0 0.001');
+    plane.appendChild(label);
+
+    // Position on the OUTER side: +X for right hand, -X for left hand
+    const outward = (this._handSide === 'right') ? this.data.outwardDist : -this.data.outwardDist;
+    plane.object3D.position.set(outward, this.data.verticalOffset, this.data.forwardOffset);
+
+    // Parent to the controller so it follows the hand
+    this.el.appendChild(plane);
+    this._planes.push(plane);
   },
 
   _clearPlanes(){
     this._planes.forEach(p => p.remove());
     this._planes.length = 0;
-  },
-
-  _buildHints(){
-    const isRight = this._handSide === 'right';
-    const leftLabel  = isRight ? 'B' : 'Y';
-    const rightLabel = isRight ? 'A' : 'X';
-    const gripLabel  = 'GRIP';
-
-    const aNode = this.data.useModelAnchors ? this._findButtonNode(isRight ? 'A' : 'X') : null;
-    const bNode = this.data.useModelAnchors ? this._findButtonNode(isRight ? 'B' : 'Y') : null;
-    const gNode = this.data.useModelAnchors ? this._findGripNode() : null;
-
-    const leftPlane  = this._makeHintPlane(leftLabel);
-    const rightPlane = this._makeHintPlane(rightLabel);
-    const gripPlane  = this._makeHintPlane(gripLabel);
-
-    // A / X — top lift on Y
-    if (aNode) this._attachWithLift(rightPlane, aNode, 'y', this.data.hintLiftTop);
-    else       this._fallbackTop(rightPlane, isRight ? this.data.rA : this.data.lX);
-
-    // B / Y — top lift on Y
-    if (bNode) this._attachWithLift(leftPlane, bNode, 'y', this.data.hintLiftTop);
-    else       this._fallbackTop(leftPlane, isRight ? this.data.rB : this.data.lY);
-
-    // GRIP — side lift on ±X (outward)
-    if (gNode) this._attachWithLift(gripPlane, gNode, 'x', isRight ?  this.data.hintLiftSide : -this.data.hintLiftSide);
-    else       this._fallbackSide(gripPlane, isRight ? this.data.rGrip : this.data.lGrip, isRight ?  this.data.hintLiftSide : -this.data.hintLiftSide);
-
-    this._planes.push(leftPlane, rightPlane, gripPlane);
-  },
-
-  _makeHintPlane(label){
-    const [w,h] = this.data.hintSize.split(' ').map(parseFloat);
-    const p = document.createElement('a-plane');
-    p.setAttribute('width',  w);
-    p.setAttribute('height', h);
-    p.setAttribute('material', `color:${this.data.hintBg}; opacity:${this.data.hintOpacity}; transparent:true; side:double`);
-    const t = document.createElement('a-entity');
-    t.setAttribute('text', `value:${label}; align:center; color:#fff; width:${this.data.hintTextW}`);
-    t.setAttribute('position', '0 0 0.001');
-    p.appendChild(t);
-    // attach to controller root for now; we may reparent below
-    this.el.appendChild(p);
-    return p;
-  },
-
-  _attachWithLift(plane, node, axis, lift){
-    node.add(plane.object3D);
-    // clear any previous transform relative to old parent
-    plane.object3D.position.set(0,0,0);
-    plane.object3D.rotation.set(0,0,0);
-    if (axis === 'y') plane.object3D.position.y += lift;           // raise above surface
-    else if (axis === 'x') plane.object3D.position.x += lift;       // push outward on side
-  },
-
-  _fallbackTop(plane, triplet){
-    const [x,y,z] = triplet.split(' ').map(parseFloat);
-    // add top lift on Y
-    plane.object3D.position.set(x, y + this.data.hintLiftTop, z);
-    this.el.object3D.add(plane.object3D);
-  },
-
-  _fallbackSide(plane, triplet, outward){
-    const [x,y,z] = triplet.split(' ').map(parseFloat);
-    // push outward along ±X (outer side of controller)
-    plane.object3D.position.set(x + outward, y, z);
-    this.el.object3D.add(plane.object3D);
   },
 
   _getHandSide(){
@@ -563,42 +497,11 @@ AFRAME.registerComponent('size-picker',{
     if (id.includes('right')) return 'right';
     if (id.includes('left'))  return 'left';
     return 'right';
-  },
-
-  _findButtonNode(letter){
-    const wanted = letter.toLowerCase(); // 'a','b','x','y'
-    const patterns = [
-      `button_${wanted}`, `${wanted}_button`, `button-${wanted}`, `button${wanted}`,
-      `${wanted}button`, `btn_${wanted}`, `btn-${wanted}`, `key_${wanted}`, `${wanted}`
-    ];
-    let hit = null;
-    if (!this.el.object3D) return null;
-    this.el.object3D.traverse(n=>{
-      if (hit || !n.name) return;
-      const name = n.name.toLowerCase().replace(/\s+/g,'');
-      const ok = patterns.some(p => name.includes(p)) ||
-                 (name.includes('button') && name.includes(wanted));
-      if (ok) hit = n;
-    });
-    return hit;
-  },
-
-  _findGripNode(){
-    // look for nodes with 'grip' or 'squeeze' in the name
-    let hit = null;
-    if (!this.el.object3D) return null;
-    this.el.object3D.traverse(n=>{
-      if (hit || !n.name) return;
-      const name = n.name.toLowerCase();
-      if (name.includes('grip') || name.includes('squeeze')) hit = n;
-    });
-    return hit;
   }
 });
 
 
 
-// 5) COLOR-PICKER (starts ring on defaultColor reliably + correct UP/DOWN)
 // 5) COLOR-PICKER — start ring at top-left (index 0)
 AFRAME.registerComponent('color-picker',{
   schema:{
@@ -873,17 +776,17 @@ AFRAME.registerComponent('oculus-thumbstick-controls', {
 
 AFRAME.registerComponent('touch-button-colors', {
   schema: {
-    a:       { type: 'color', default: '#FF7C5E' },
-    b:       { type: 'color', default: '#FF7C5E' },
-    x:       { type: 'color', default: '#A3D6FF' },
-    y:       { type: 'color', default: '#A3D6FF' },
-    grip:    { type: 'color', default: '#F83DFF' },   // side squeeze
+    a:       { type: 'color', default: '#ff5e66ff' },
+    b:       { type: 'color', default: '#0400ff97' },
+    x:       { type: 'color', default: '#ff5e66ff' },
+    y:       { type: 'color', default: '#0400ff97' },
+    grip:    { type: 'color', default: '#fff569ff' },   // side squeeze
     trigger: { type: 'color', default: '' },   // index trigger
     stick:   { type: 'color', default: '' },   // thumbstick cap
     menu:    { type: 'color', default: '' },   // menu/system
     // Rendering style
     useEmissive:        { default: true },
-    emissiveIntensity:  { default: 0.6 },
+    emissiveIntensity:  { default:1 },
     overrideBaseColor:  { default: true },    // also set material.color
     // Debug
     debug:              { default: false }
