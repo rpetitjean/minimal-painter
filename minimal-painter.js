@@ -380,39 +380,69 @@ AFRAME.registerComponent('draw-line', {
   }
 });
 
-
-// 4) SIZE-PICKER — button hints tuned: +0.5cm lift, side grip placement
+// 4) SIZE-PICKER — single side hint per hand (square, no text)
 AFRAME.registerComponent('size-picker',{
   schema:{
     sizes:{ default:[0.0025,0.005,0.01,0.02] },
 
-    // Rings UI orientation (same as before)
-    faceDown: { default: true },
+    // One square hint per hand
+    hintSize:        { default: 0.028 },       // width = height (m)
+    hintTint:        { default: '#111' },
+    hintOpacity:     { default: 0.9 },
+    imgHint:         { default: '' },          // selector or URL (optional)
+    billboardHints:  { default: true },        // face camera
+    faceOutward:     { default: true },        // if not billboarding, point normal outward
 
-    // Side hint config
-    hintText:       { default: 'B/Y: SIZE' }, // label text
-    hintSize:       { default: '0.10 0.035' }, // width height (meters)
-    hintBg:         { default: '#111' },
-    hintOpacity:    { default: 0.9 },
-    hintTextWidth:  { default: 2.4 },
-    billboardHint:  { default: true },  // make the hint face camera
+    // Side placement (controller local space)
+    outerOffset:     { default: 0.04 },        // 4 cm out to ±X
+    raise:           { default: 0.01 },        // 1 cm up on +Y
+    forward:         { default: 0.00 },        // Z tweak if needed
 
-    // Placement relative to controller local axes
-    outwardDist:    { default: 0.035 }, // ~3.5 cm outward (±X)
-    verticalOffset: { default: 0.012 }, // up (Y)
-    forwardOffset:  { default: 0.000 }  // forward (Z)
+    // keep your button to cycle sizes
+    cycleWithBY:     { default: true }
   },
 
   init(){
+    // --- size UI (as before) ---
     this.idx = 0;
-    this._planes = [];
-    this._handSide = this._getHandSide(); // 'right' | 'left'
+    this._buildUI();
+    this._highlight();
 
-    // ---- size rings UI (unchanged) ----
+    // --- single side hint ---
+    this._handSide = this._getHandSide(); // 'right' | 'left'
+    this._hint = this._makeSideHint();
+    this._placeSideHint();
+
+    // input to cycle sizes (optional)
+    if (this.data.cycleWithBY) {
+      this.onBtn = this.onBtn.bind(this);
+      ['bbuttondown','ybuttondown'].forEach(evt => this.el.addEventListener(evt, this.onBtn));
+    }
+  },
+
+  remove(){
+    if (this.data.cycleWithBY) {
+      ['bbuttondown','ybuttondown'].forEach(evt => this.el.removeEventListener(evt, this.onBtn));
+    }
+    if (this.container) this.container.remove();
+    if (this._hint) this._hint.remove();
+  },
+
+  tick(){
+    if (!this.data.billboardHints || !this._hint) return;
+    const cam = this.el.sceneEl?.camera?.el;
+    if (!cam?.object3D) return;
+    const camPos = new THREE.Vector3();
+    cam.object3D.getWorldPosition(camPos);
+    this._hint.object3D?.lookAt(camPos);
+  },
+
+  // ---------- size UI ----------
+  _buildUI(){
     const radii=[0.0075,0.01,0.0125,0.015], gap=0.03;
     this.container=document.createElement('a-entity');
     this.container.setAttribute('position','0 -0.05 -0.055');
-    this.container.setAttribute('rotation', this.data.faceDown ? '-90 0 0' : '90 0 0');
+    this.container.setAttribute('rotation','90 0 0');
     this.el.appendChild(this.container);
 
     this.cells = radii.map((r,i)=>{
@@ -424,39 +454,10 @@ AFRAME.registerComponent('size-picker',{
       this.container.appendChild(ring);
       return ring;
     });
-    this._highlight();
-
-    // Cycle sizes with B/Y
-    this.onBtn = this.onBtn.bind(this);
-    ['bbuttondown','ybuttondown'].forEach(evt => this.el.addEventListener(evt, this.onBtn));
-
-    // ---- single side hint ----
-    this._buildSideHint();
-  },
-
-  remove(){
-    ['bbuttondown','ybuttondown'].forEach(evt => this.el.removeEventListener(evt, this.onBtn));
-    if (this.container) this.container.remove();
-    this._clearPlanes();
-  },
-
-  tick(){
-    if (!this.data.billboardHint || !this._planes.length) return;
-    const cam = this.el.sceneEl && this.el.sceneEl.camera && this.el.sceneEl.camera.el;
-    if (!cam || !cam.object3D) return;
-    const camPos = new THREE.Vector3();
-    cam.object3D.getWorldPosition(camPos);
-    this._planes.forEach(p => p.object3D && p.object3D.lookAt(camPos));
-  },
-
-  // ----- helpers -----
-  onBtn(){
-    this.idx = (this.idx+1) % this.data.sizes.length;
-    this._highlight();
   },
 
   _highlight(){
-    this.cells.forEach((ring,i)=>{
+    this.cells.forEach((ring,i)=> {
       ring.setAttribute('material', i===this.idx ? 'color:#FFF;side:double' : 'color:#888;side:double');
     });
     const t = this.data.sizes[this.idx];
@@ -464,42 +465,55 @@ AFRAME.registerComponent('size-picker',{
     if (brush) brush.setAttribute('draw-line','thickness', t);
   },
 
-  _buildSideHint(){
-    const [w,h] = this.data.hintSize.split(' ').map(parseFloat);
-    const plane = document.createElement('a-plane');
-    plane.setAttribute('width',  w);
-    plane.setAttribute('height', h);
-    plane.setAttribute('material', `color:${this.data.hintBg}; opacity:${this.data.hintOpacity}; transparent:true; side:double`);
-
-    const label = document.createElement('a-entity');
-    label.setAttribute('text', `value:${this.data.hintText}; align:center; color:#fff; width:${this.data.hintTextWidth}`);
-    label.setAttribute('position','0 0 0.001');
-    plane.appendChild(label);
-
-    // Position on the OUTER side: +X for right hand, -X for left hand
-    const outward = (this._handSide === 'right') ? this.data.outwardDist : -this.data.outwardDist;
-    plane.object3D.position.set(outward, this.data.verticalOffset, this.data.forwardOffset);
-
-    // Parent to the controller so it follows the hand
-    this.el.appendChild(plane);
-    this._planes.push(plane);
+  onBtn(){
+    this.idx = (this.idx+1)%this.data.sizes.length;
+    this._highlight();
   },
 
-  _clearPlanes(){
-    this._planes.forEach(p => p.remove());
-    this._planes.length = 0;
+  // ---------- single side hint ----------
+  _makeSideHint(){
+    const s = this.data.hintSize;
+    const p = document.createElement('a-plane');
+    p.setAttribute('width',  s);
+    p.setAttribute('height', s);
+
+    const mat = this.data.imgHint
+      ? `src:${this.data.imgHint}; side:double; transparent:true`
+      : `color:${this.data.hintTint}; opacity:${this.data.hintOpacity}; transparent:true; side:double`;
+    p.setAttribute('material', mat);
+
+    // attach to the controller entity
+    this.el.appendChild(p);
+    return p;
+  },
+
+  _placeSideHint(){
+    if (!this._hint?.object3D) return;
+
+    const sign = (this._handSide === 'right') ? +1 : -1; // +X for right, -X for left
+    const x = sign * this.data.outerOffset;
+    const y = this.data.raise;
+    const z = this.data.forward;
+
+    // position
+    this._hint.object3D.position.set(x, y, z);
+
+    // orientation if not billboarding: face outward along ±X
+    if (!this.data.billboardHints && this.data.faceOutward) {
+      // plane faces +Z by default; rotate around Y so normal points ±X
+      this._hint.object3D.rotation.set(0, sign * Math.PI/2, 0);
+    }
   },
 
   _getHandSide(){
     const mtc = this.el.getAttribute('meta-touch-controls');
-    if (mtc && mtc.hand) return mtc.hand;
+    if (mtc?.hand) return mtc.hand;
     const id = (this.el.id||'').toLowerCase();
     if (id.includes('right')) return 'right';
     if (id.includes('left'))  return 'left';
     return 'right';
   }
 });
-
 
 
 // 5) COLOR-PICKER — start ring at top-left (index 0)
