@@ -364,48 +364,51 @@ AFRAME.registerComponent('draw-line', {
 });
 
 
-// 4) SIZE-PICKER
-// 4) SIZE-PICKER  (adds button-hint planes on the active hand)
-// 4) SIZE-PICKER — button hints snapped to Quest controller buttons
+// 4) SIZE-PICKER — button hints tuned: +0.5cm lift, side grip placement
 AFRAME.registerComponent('size-picker',{
   schema:{
     sizes:{ default:[0.0025,0.005,0.01,0.02] },
-    // Hints styling
+
+    // Hint styling
     hintSize:     { default: '0.028 0.012' }, // w h
     hintBg:       { default: '#111' },
     hintOpacity:  { default: 0.9 },
     hintTextW:    { default: 1.6 },
-    // Model anchoring
+
+    // Placement behavior
     useModelAnchors: { default: true },
-    hintLift:        { default: 0.01 },  // how far above the button surface
-    billboardHints:  { default: true },  // face hints toward camera each frame
-    // Fallback offsets (meters, in controller local space)
-    // Right hand fallback
-    rA: { default: '0.021 0.035 -0.03' },
-    rB: { default: '-0.014 0.045 -0.03' },
-    rGrip: { default: '0 0.02 0.02' },
-    // Left hand fallback (mirrored)
-    lX: { default: '-0.021 0.035 -0.03' },
-    lY: { default: '0.014 0.045 -0.03' },
-    lGrip: { default: '0 0.02 0.02' }
+    billboardHints:  { default: true },
+
+    // Lifts (meters): top buttons use Y, grip uses ±X (outward)
+    hintLiftTop:  { default: 0.005 }, // 0.5 cm above A/B/X/Y
+    hintLiftSide: { default: 0.005 }, // 0.5 cm out from grip side
+
+    // Fallback local-space positions (meters) if button nodes aren't found
+    // RIGHT HAND
+    rA:    { default: '0.021 0.035 -0.030' }, // near A
+    rB:    { default: '-0.014 0.045 -0.030' },// near B
+    rGrip: { default: '0.030 0.010 0.000' },  // side (outer, +X)
+    // LEFT HAND (mirrored)
+    lX:    { default: '-0.021 0.035 -0.030' },// near X
+    lY:    { default: '0.014 0.045 -0.030' }, // near Y
+    lGrip: { default: '-0.030 0.010 0.000' }  // side (outer, -X)
   },
 
   init(){
-    // ---- size UI (unchanged) ----
+    // --- size UI (as before) ---
     this.idx = 0;
     this._buildUI();
     this._highlight();
 
-    // ---- button hints ----
+    // --- button hints ---
     this._planes = [];
-    this._handSide = this._getHandSide(); // 'right' or 'left'
+    this._handSide = this._getHandSide(); // 'right' | 'left'
 
     const ready = () => this._buildHints();
-    // build after model (if any) is loaded
     if (this.el.hasLoaded) ready(); else this.el.addEventListener('loaded', ready);
     this.el.addEventListener('model-loaded', () => this._rebuildHints());
 
-    // cycle sizes with B/Y as you had
+    // Cycle sizes with B / Y as before
     this.onBtn = this.onBtn.bind(this);
     ['bbuttondown','ybuttondown'].forEach(evt => this.el.addEventListener(evt, this.onBtn));
   },
@@ -422,11 +425,7 @@ AFRAME.registerComponent('size-picker',{
     if (!cam || !cam.object3D) return;
     const camPos = new THREE.Vector3();
     cam.object3D.getWorldPosition(camPos);
-    this._planes.forEach(p => {
-      if (!p.object3D) return;
-      // Make the plane face the camera for readability
-      p.object3D.lookAt(camPos);
-    });
+    this._planes.forEach(p => p.object3D && p.object3D.lookAt(camPos));
   },
 
   // ---------- size UI ----------
@@ -474,33 +473,31 @@ AFRAME.registerComponent('size-picker',{
   },
 
   _buildHints(){
-    // Target labels per hand
     const isRight = this._handSide === 'right';
     const leftLabel  = isRight ? 'B' : 'Y';
     const rightLabel = isRight ? 'A' : 'X';
     const gripLabel  = 'GRIP';
 
-    // Try to attach to model button nodes
     const aNode = this.data.useModelAnchors ? this._findButtonNode(isRight ? 'A' : 'X') : null;
     const bNode = this.data.useModelAnchors ? this._findButtonNode(isRight ? 'B' : 'Y') : null;
     const gNode = this.data.useModelAnchors ? this._findGripNode() : null;
 
-    // Create planes
     const leftPlane  = this._makeHintPlane(leftLabel);
     const rightPlane = this._makeHintPlane(rightLabel);
     const gripPlane  = this._makeHintPlane(gripLabel);
 
-    // Attach or fallback-position them
-    if (aNode) this._attachAboveNode(rightPlane, aNode);
-    else       this._fallbackPos(rightPlane, isRight ? this.data.rA : this.data.lX);
+    // A / X — top lift on Y
+    if (aNode) this._attachWithLift(rightPlane, aNode, 'y', this.data.hintLiftTop);
+    else       this._fallbackTop(rightPlane, isRight ? this.data.rA : this.data.lX);
 
-    if (bNode) this._attachAboveNode(leftPlane, bNode);
-    else       this._fallbackPos(leftPlane, isRight ? this.data.rB : this.data.lY);
+    // B / Y — top lift on Y
+    if (bNode) this._attachWithLift(leftPlane, bNode, 'y', this.data.hintLiftTop);
+    else       this._fallbackTop(leftPlane, isRight ? this.data.rB : this.data.lY);
 
-    if (gNode) this._attachAboveNode(gripPlane, gNode);
-    else       this._fallbackPos(gripPlane, isRight ? this.data.rGrip : this.data.lGrip);
+    // GRIP — side lift on ±X (outward)
+    if (gNode) this._attachWithLift(gripPlane, gNode, 'x', isRight ?  this.data.hintLiftSide : -this.data.hintLiftSide);
+    else       this._fallbackSide(gripPlane, isRight ? this.data.rGrip : this.data.lGrip, isRight ?  this.data.hintLiftSide : -this.data.hintLiftSide);
 
-    // Keep refs for billboarding
     this._planes.push(leftPlane, rightPlane, gripPlane);
   },
 
@@ -510,25 +507,35 @@ AFRAME.registerComponent('size-picker',{
     p.setAttribute('width',  w);
     p.setAttribute('height', h);
     p.setAttribute('material', `color:${this.data.hintBg}; opacity:${this.data.hintOpacity}; transparent:true; side:double`);
-    // text child
     const t = document.createElement('a-entity');
     t.setAttribute('text', `value:${label}; align:center; color:#fff; width:${this.data.hintTextW}`);
     t.setAttribute('position', '0 0 0.001');
     p.appendChild(t);
-    // attach to controller root by default
+    // attach to controller root for now; we may reparent below
     this.el.appendChild(p);
     return p;
   },
 
-  _attachAboveNode(plane, node){
-    // Parent to the node and lift slightly off the surface
+  _attachWithLift(plane, node, axis, lift){
     node.add(plane.object3D);
-    plane.object3D.position.set(0, this.data.hintLift, 0);
+    // clear any previous transform relative to old parent
+    plane.object3D.position.set(0,0,0);
+    plane.object3D.rotation.set(0,0,0);
+    if (axis === 'y') plane.object3D.position.y += lift;           // raise above surface
+    else if (axis === 'x') plane.object3D.position.x += lift;       // push outward on side
   },
 
-  _fallbackPos(plane, triplet){
+  _fallbackTop(plane, triplet){
     const [x,y,z] = triplet.split(' ').map(parseFloat);
-    plane.object3D.position.set(x,y,z);
+    // add top lift on Y
+    plane.object3D.position.set(x, y + this.data.hintLiftTop, z);
+    this.el.object3D.add(plane.object3D);
+  },
+
+  _fallbackSide(plane, triplet, outward){
+    const [x,y,z] = triplet.split(' ').map(parseFloat);
+    // push outward along ±X (outer side of controller)
+    plane.object3D.position.set(x + outward, y, z);
     this.el.object3D.add(plane.object3D);
   },
 
@@ -538,12 +545,10 @@ AFRAME.registerComponent('size-picker',{
     const id = (this.el.id||'').toLowerCase();
     if (id.includes('right')) return 'right';
     if (id.includes('left'))  return 'left';
-    // default to right
     return 'right';
   },
 
   _findButtonNode(letter){
-    // Search GLTF nodes for common button names
     const wanted = letter.toLowerCase(); // 'a','b','x','y'
     const patterns = [
       `button_${wanted}`, `${wanted}_button`, `button-${wanted}`, `button${wanted}`,
@@ -554,15 +559,15 @@ AFRAME.registerComponent('size-picker',{
     this.el.object3D.traverse(n=>{
       if (hit || !n.name) return;
       const name = n.name.toLowerCase().replace(/\s+/g,'');
-      // require 'button' if the name is a single letter to avoid false positives
       const ok = patterns.some(p => name.includes(p)) ||
                  (name.includes('button') && name.includes(wanted));
       if (ok) hit = n;
     });
     return hit;
-    },
+  },
 
   _findGripNode(){
+    // look for nodes with 'grip' or 'squeeze' in the name
     let hit = null;
     if (!this.el.object3D) return null;
     this.el.object3D.traverse(n=>{
@@ -573,6 +578,7 @@ AFRAME.registerComponent('size-picker',{
     return hit;
   }
 });
+
 
 
 // 5) COLOR-PICKER (starts ring on defaultColor reliably + correct UP/DOWN)
