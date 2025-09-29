@@ -853,3 +853,140 @@ AFRAME.registerComponent('oculus-thumbstick-controls', {
         this.el.removeEventListener('thumbstickmoved', this.thumbstickMoved);
     }
 });
+
+AFRAME.registerComponent('touch-button-colors', {
+  schema: {
+    a:       { type: 'color', default: '#FF7C5E' },
+    b:       { type: 'color', default: '#FF7C5E' },
+    x:       { type: 'color', default: '#A3D6FF' },
+    y:       { type: 'color', default: '#A3D6FF' },
+    grip:    { type: 'color', default: '#F83DFF' },   // side squeeze
+    trigger: { type: 'color', default: '' },   // index trigger
+    stick:   { type: 'color', default: '' },   // thumbstick cap
+    menu:    { type: 'color', default: '' },   // menu/system
+    // Rendering style
+    useEmissive:        { default: true },
+    emissiveIntensity:  { default: 0.6 },
+    overrideBaseColor:  { default: true },    // also set material.color
+    // Debug
+    debug:              { default: false }
+  },
+
+  init () {
+    this._original = new Map();   // node.uuid -> original material(s)
+    this._targets  = {};          // key -> [nodes]
+    this._onModelLoaded = this._onModelLoaded.bind(this);
+    this.el.addEventListener('model-loaded', this._onModelLoaded);
+
+    // If model already there (rare), apply right away
+    if (this.el.getObject3D('mesh')) this._onModelLoaded();
+  },
+
+  remove () {
+    // restore original materials
+    this._restoreAll();
+    this.el.removeEventListener('model-loaded', this._onModelLoaded);
+  },
+
+  update () {
+    // re-color if colors change
+    if (this.el.getObject3D('mesh')) {
+      this._collectTargets(); // (re)collect if needed
+      this._applyAll();
+    }
+  },
+
+  _onModelLoaded () {
+    this._collectTargets();
+    this._applyAll();
+  },
+
+  _collectTargets () {
+    this._targets = {
+      a: [], b: [], x: [], y: [],
+      grip: [], trigger: [], stick: [], menu: []
+    };
+    const mesh = this.el.getObject3D('mesh');
+    if (!mesh) return;
+
+    const tests = {
+      a:       (n) => this._match(n, ['button_a','a_button','button-a','buttona']) || (this._has(n,'button') && this._has(n,'a')),
+      b:       (n) => this._match(n, ['button_b','b_button','button-b','buttonb']) || (this._has(n,'button') && this._has(n,'b')),
+      x:       (n) => this._match(n, ['button_x','x_button','button-x','buttonx']) || (this._has(n,'button') && this._has(n,'x')),
+      y:       (n) => this._match(n, ['button_y','y_button','button-y','buttony']) || (this._has(n,'button') && this._has(n,'y')),
+      grip:    (n) => this._has(n,'grip') || this._has(n,'squeeze'),
+      trigger: (n) => this._has(n,'trigger'),
+      stick:   (n) => this._has(n,'thumbstick') || this._has(n,'joystick') || this._has(n,'stick'),
+      menu:    (n) => this._has(n,'menu') || this._has(n,'system') || this._has(n,'oculus') || this._has(n,'meta')
+    };
+
+    mesh.traverse((n)=>{
+      if (!n.isMesh || !n.name) return;
+      const name = n.name.toLowerCase().replace(/\s+/g,'');
+      for (const key in tests) {
+        if (tests[key](name)) this._targets[key].push(n);
+      }
+    });
+
+    if (this.data.debug) {
+      for (const k in this._targets) {
+        if (this._targets[k].length) console.log(`[touch-button-colors] Found ${k}:`, this._targets[k].map(n=>n.name));
+      }
+    }
+  },
+
+  _applyAll () {
+    const keys = ['a','b','x','y','grip','trigger','stick','menu'];
+    keys.forEach(k => this._applyColorToNodes(k, this.data[k]));
+  },
+
+  _applyColorToNodes (key, hex) {
+    const nodes = this._targets[key] || [];
+    if (!nodes.length || !hex) return;
+    nodes.forEach(node => this._tintNode(node, hex));
+  },
+
+  _tintNode (node, hex) {
+    // Handle multi-material meshes too
+    const materials = Array.isArray(node.material) ? node.material : [node.material];
+
+    // Store originals once
+    if (!this._original.has(node.uuid)) {
+      this._original.set(node.uuid, materials.map(m => m));
+      // Clone materials so we don’t mutate shared ones
+      const cloned = materials.map(m => m && m.clone ? m.clone() : m);
+      node.material = Array.isArray(node.material) ? cloned : cloned[0];
+    }
+
+    const mats = Array.isArray(node.material) ? node.material : [node.material];
+    mats.forEach(m => {
+      if (!m) return;
+      if (this.data.overrideBaseColor && m.color) m.color.set(hex);
+      if (this.data.useEmissive && 'emissive' in m) {
+        m.emissive.set(hex);
+        if ('emissiveIntensity' in m) m.emissiveIntensity = this.data.emissiveIntensity;
+      }
+      m.needsUpdate = true;
+    });
+  },
+
+  _restoreAll () {
+    const mesh = this.el.getObject3D('mesh');
+    if (!mesh || !this._original.size) return;
+    mesh.traverse((n)=>{
+      if (!n.isMesh) return;
+      const orig = this._original.get(n.uuid);
+      if (!orig) return;
+      n.material = Array.isArray(n.material) ? orig : orig[0];
+    });
+    this._original.clear();
+  },
+
+  _match (name, patterns) {
+    return patterns.some(p => name.includes(p));
+  },
+  _has (name, token) {
+    return name.includes(token);
+  }
+});
+
