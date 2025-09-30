@@ -129,23 +129,25 @@ AFRAME.registerComponent('paint-tool-reset', {
     const painter = (side === 'left') ? this.leftHand : this.rightHand;
     const palette = (side === 'left') ? this.rightHand : this.leftHand;
 
-    // 1) CLEAN UP both hands (disable draw-line safely + strip attrs)
+    // Preserve any existing touch-button-colors configs before cleanup
+    const leftCfg  = this.leftHand .getAttribute('touch-button-colors');
+    const rightCfg = this.rightHand.getAttribute('touch-button-colors');
+
+    // 1) CLEAN UP both hands
     [ this.leftHand, this.rightHand ].forEach(hand => {
       const dlComp = hand.components['draw-line'];
       if (dlComp) {
-        dlComp.disableInput?.();
-        if (dlComp.indicator) {
-          hand.object3D.remove(dlComp.indicator);
-          dlComp.indicator.geometry?.dispose?.();
-          dlComp.indicator.material?.dispose?.();
-        }
+        dlComp.disableInput();
+        hand.object3D.remove(dlComp.indicator);
+        dlComp.indicator.geometry.dispose();
+        dlComp.indicator.material.dispose();
       }
       hand.removeAttribute('draw-line');
       hand.removeAttribute('active-brush');
       hand.removeAttribute('size-picker');
       hand.removeAttribute('color-picker');
       hand.removeAttribute('oculus-thumbstick-controls');
-      // ensure only the painter will have colored buttons
+      // NEW: ensure only the painter will have colored buttons
       hand.removeAttribute('touch-button-colors');
     });
 
@@ -154,34 +156,18 @@ AFRAME.registerComponent('paint-tool-reset', {
     painter.setAttribute('draw-line', 'color:#EF2D5E; thickness:0.02; minDist:0.005');
     painter.setAttribute('active-brush','');
 
-    // 2b) Painter-only button colors (per-hand mapping)
-    // Right painter: B blue, A red, Grip yellow
-    // Left  painter: Y blue, X red, Grip yellow
-    if (painter === this.rightHand) {
-      painter.setAttribute('touch-button-colors', {
-        a: '#ff5e66ff',   // red
-        b: '#0400ff97',   // blue
-        x: '', y: '',
-        grip: '#fff569ff',// yellow
-        trigger: '', stick: '', menu: '',
-        useEmissive: true, emissiveIntensity: 1, overrideBaseColor: true
-      });
-    } else {
-      painter.setAttribute('touch-button-colors', {
-        x: '#ff5e66ff',   // red
-        y: '#0400ff97',   // blue
-        a: '', b: '',
-        grip: '#fff569ff',// yellow
-        trigger: '', stick: '', menu: '',
-        useEmissive: true, emissiveIntensity: 1, overrideBaseColor: true
-      });
-    }
+    // NEW: re-attach touch-button-colors ONLY to the painter.
+    // Prefer painter's own previous config; else borrow palette's; else defaults.
+    const cfgToUse =
+      (painter === this.leftHand ? leftCfg : rightCfg) ||
+      (painter === this.leftHand ? rightCfg : leftCfg) || '';
+    painter.setAttribute('touch-button-colors', cfgToUse);
 
     // Disable and hide its sphere until the zone tells us to show
     const dl = painter.components['draw-line'];
     if (dl) {
-      dl.disableInput?.();
-      if (dl.indicator) dl.indicator.visible = false;
+      dl.disableInput();
+      dl.indicator.visible = false;
     }
 
     // 3) IF WE’RE ALREADY IN THE PAINT ZONE, re-enable UI & drawing
@@ -196,7 +182,6 @@ AFRAME.registerComponent('paint-tool-reset', {
     this.rightHand.removeEventListener('gripdown', this.onGrip);
   }
 });
-
 
 
 AFRAME.registerComponent('hand-swapper', {
@@ -221,24 +206,18 @@ AFRAME.registerComponent('hand-swapper', {
     const painter = side === 'left' ? this.leftHand : this.rightHand;
     const palette = side === 'left' ? this.rightHand : this.leftHand;
 
+    // Preserve configs before cleanup
+    const leftCfg  = this.leftHand .getAttribute('touch-button-colors');
+    const rightCfg = this.rightHand.getAttribute('touch-button-colors');
+
     // 1) remove ALL paint/move attributes from both hands
     [this.leftHand, this.rightHand].forEach(h => {
-      // be thorough with draw-line cleanup
-      const dl = h.components['draw-line'];
-      if (dl) {
-        dl.disableInput?.();
-        if (dl.indicator) {
-          h.object3D.remove(dl.indicator);
-          dl.indicator.geometry?.dispose?.();
-          dl.indicator.material?.dispose?.();
-        }
-      }
       h.removeAttribute('oculus-thumbstick-controls');
       h.removeAttribute('draw-line');
       h.removeAttribute('size-picker');
       h.removeAttribute('color-picker');
       h.removeAttribute('active-brush');
-      // strip colors; we’ll re-attach to the painter below
+      // NEW: strip colors; we’ll re-attach to the painter below
       h.removeAttribute('touch-button-colors');
     });
 
@@ -249,35 +228,20 @@ AFRAME.registerComponent('hand-swapper', {
     painter.setAttribute('size-picker','');
     painter.setAttribute('active-brush','');
 
-    // Painter-only button colors (per-hand mapping)
-    if (painter === this.rightHand) {
-      painter.setAttribute('touch-button-colors', {
-        a: '#ff5e66ff',   // red
-        b: '#0400ff97',   // blue
-        x: '', y: '',
-        grip: '#fff569ff',// yellow
-        trigger: '', stick: '', menu: '',
-        useEmissive: true, emissiveIntensity: 1, overrideBaseColor: true
-      });
-    } else {
-      painter.setAttribute('touch-button-colors', {
-        x: '#ff5e66ff',   // red
-        y: '#0400ff97',   // blue
-        a: '', b: '',
-        grip: '#fff569ff',// yellow
-        trigger: '', stick: '', menu: '',
-        useEmissive: true, emissiveIntensity: 1, overrideBaseColor: true
-      });
-    }
+    // NEW: attach touch-button-colors ONLY to painter (preserve per-hand config)
+    const cfgToUse =
+      (painter === this.leftHand ? leftCfg : rightCfg) ||
+      (painter === this.leftHand ? rightCfg : leftCfg) || '';
+    painter.setAttribute('touch-button-colors', cfgToUse);
 
     // start disabled until zone says otherwise
     const dl = painter.components['draw-line'];
-    if (dl) dl.disableInput?.();
+    if (dl) dl.disableInput();
 
     // if we’re already inside when we swapped, re-enable immediately
     const paintCtrl = this.el.components['painting-area-controller'];
     if (paintCtrl && paintCtrl.inside && dl) {
-      dl.enableInput?.();
+      dl.enableInput();
     }
 
     // 4) other hand just gets the color-picker
@@ -289,7 +253,6 @@ AFRAME.registerComponent('hand-swapper', {
     this.rightHand.removeEventListener('gripdown', this.onGrip);
   }
 });
-
 
 
 // 3) DRAW-LINE
