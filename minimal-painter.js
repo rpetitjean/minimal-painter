@@ -106,13 +106,15 @@ AFRAME.registerComponent('paint-tool-reset', {
     this.rightHand    = document.getElementById('right-hand');
     this.onGrip       = this.onGrip.bind(this);
 
+    // locomotion config
     this.movementAttr = { rig: '#rig', speed: 0.2 };
     this.currentSide  = null;
 
+    // swap painter on grip
     this.leftHand .addEventListener('gripdown', this.onGrip);
     this.rightHand.addEventListener('gripdown', this.onGrip);
 
-    // Default to right-hand
+    // start on right
     this.assignTools('right', /* force */ true);
   },
 
@@ -128,47 +130,52 @@ AFRAME.registerComponent('paint-tool-reset', {
     const painter = (side === 'left') ? this.leftHand : this.rightHand;
     const palette = (side === 'left') ? this.rightHand : this.leftHand;
 
-    // Preserve any per-hand colors config (if you had set it earlier)
-    const leftCfg  = this.leftHand .getAttribute('touch-button-colors');
-    const rightCfg = this.rightHand.getAttribute('touch-button-colors');
-
     // 1) CLEAN UP both hands
     [ this.leftHand, this.rightHand ].forEach(hand => {
       const dlComp = hand.components['draw-line'];
       if (dlComp) {
         dlComp.disableInput();
         hand.object3D.remove(dlComp.indicator);
-        dlComp.indicator.geometry.dispose();
-        dlComp.indicator.material.dispose();
+        if (dlComp.indicator?.geometry)  dlComp.indicator.geometry.dispose();
+        if (dlComp.indicator?.material)  dlComp.indicator.material.dispose();
       }
       hand.removeAttribute('draw-line');
       hand.removeAttribute('active-brush');
       hand.removeAttribute('size-picker');
       hand.removeAttribute('color-picker');
       hand.removeAttribute('oculus-thumbstick-controls');
-      // ensure only painter gets colored buttons
+      // IMPORTANT: the non-painting hand must have no special colors
       hand.removeAttribute('touch-button-colors');
     });
 
-    // 2) ADD locomotion + draw-line + mark this as the brush
+    // 2) Painter gets locomotion + draw + active flag
     painter.setAttribute('oculus-thumbstick-controls', this.movementAttr);
     painter.setAttribute('draw-line', 'color:#EF2D5E; thickness:0.02; minDist:0.005');
     painter.setAttribute('active-brush','');
 
-    // 3) Attach touch-button-colors ONLY to the painter (uses defaults if no cfg)
-    const cfgToUse =
-      (painter === this.leftHand ? leftCfg : rightCfg) ||
-      (painter === this.leftHand ? rightCfg : leftCfg) || '';
-    painter.setAttribute('touch-button-colors', cfgToUse);
+    // 3) Apply simple, explicit coloring on the painting hand only
+    // Right painter: B=blue, A=red, right GRIP=yellow
+    // Left painter : Y=blue, X=red,  left  GRIP=yellow
+    if (side === 'right') {
+      painter.setAttribute(
+        'touch-button-colors',
+        'a:#ff0000; b:#0000ff; grip:#ffff00; overrideBaseColor:true; useEmissive:true'
+      );
+    } else { // left
+      painter.setAttribute(
+        'touch-button-colors',
+        'x:#ff0000; y:#0000ff; grip:#ffff00; overrideBaseColor:true; useEmissive:true'
+      );
+    }
 
-    // Start disabled until zone says otherwise
+    // Keep painter's input disabled until zone says it's ok
     const dl = painter.components['draw-line'];
     if (dl) {
       dl.disableInput();
       dl.indicator.visible = false;
     }
 
-    // If already inside a painting area, enable painting immediately
+    // If we're already inside the painting area, enable immediately
     const paintCtrl = this.el.components['painting-area-controller'];
     if (paintCtrl && paintCtrl.inside) {
       paintCtrl.enablePainting();
@@ -180,7 +187,6 @@ AFRAME.registerComponent('paint-tool-reset', {
     this.rightHand.removeEventListener('gripdown', this.onGrip);
   }
 });
-
 
 
 
