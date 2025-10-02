@@ -106,14 +106,13 @@ AFRAME.registerComponent('paint-tool-reset', {
     this.rightHand    = document.getElementById('right-hand');
     this.onGrip       = this.onGrip.bind(this);
 
-    // locomotion config
     this.movementAttr = { rig: '#rig', speed: 0.2 };
     this.currentSide  = null;
 
     this.leftHand .addEventListener('gripdown', this.onGrip);
     this.rightHand.addEventListener('gripdown', this.onGrip);
 
-    // Default to right-hand on load
+    // Default to right-hand
     this.assignTools('right', /* force */ true);
   },
 
@@ -129,23 +128,25 @@ AFRAME.registerComponent('paint-tool-reset', {
     const painter = (side === 'left') ? this.leftHand : this.rightHand;
     const palette = (side === 'left') ? this.rightHand : this.leftHand;
 
-    // 1) CLEAN UP both hands (disable draw-line safely + strip attrs)
+    // Preserve any per-hand colors config (if you had set it earlier)
+    const leftCfg  = this.leftHand .getAttribute('touch-button-colors');
+    const rightCfg = this.rightHand.getAttribute('touch-button-colors');
+
+    // 1) CLEAN UP both hands
     [ this.leftHand, this.rightHand ].forEach(hand => {
       const dlComp = hand.components['draw-line'];
       if (dlComp) {
-        dlComp.disableInput?.();
-        if (dlComp.indicator) {
-          hand.object3D.remove(dlComp.indicator);
-          dlComp.indicator.geometry?.dispose?.();
-          dlComp.indicator.material?.dispose?.();
-        }
+        dlComp.disableInput();
+        hand.object3D.remove(dlComp.indicator);
+        dlComp.indicator.geometry.dispose();
+        dlComp.indicator.material.dispose();
       }
       hand.removeAttribute('draw-line');
       hand.removeAttribute('active-brush');
       hand.removeAttribute('size-picker');
       hand.removeAttribute('color-picker');
       hand.removeAttribute('oculus-thumbstick-controls');
-      // ensure only the painter will have colored buttons
+      // ensure only painter gets colored buttons
       hand.removeAttribute('touch-button-colors');
     });
 
@@ -154,37 +155,20 @@ AFRAME.registerComponent('paint-tool-reset', {
     painter.setAttribute('draw-line', 'color:#EF2D5E; thickness:0.02; minDist:0.005');
     painter.setAttribute('active-brush','');
 
-    // 2b) Painter-only button colors (per-hand mapping)
-    // Right painter: B blue, A red, Grip yellow
-    // Left  painter: Y blue, X red, Grip yellow
-    if (painter === this.rightHand) {
-      painter.setAttribute('touch-button-colors', {
-        a: '#ff5e66ff',   // red
-        b: '#0400ff97',   // blue
-        x: '', y: '',
-        grip: '#fff569ff',// yellow
-        trigger: '', stick: '', menu: '',
-        useEmissive: true, emissiveIntensity: 1, overrideBaseColor: true
-      });
-    } else {
-      painter.setAttribute('touch-button-colors', {
-        x: '#ff5e66ff',   // red
-        y: '#0400ff97',   // blue
-        a: '', b: '',
-        grip: '#fff569ff',// yellow
-        trigger: '', stick: '', menu: '',
-        useEmissive: true, emissiveIntensity: 1, overrideBaseColor: true
-      });
-    }
+    // 3) Attach touch-button-colors ONLY to the painter (uses defaults if no cfg)
+    const cfgToUse =
+      (painter === this.leftHand ? leftCfg : rightCfg) ||
+      (painter === this.leftHand ? rightCfg : leftCfg) || '';
+    painter.setAttribute('touch-button-colors', cfgToUse);
 
-    // Disable and hide its sphere until the zone tells us to show
+    // Start disabled until zone says otherwise
     const dl = painter.components['draw-line'];
     if (dl) {
-      dl.disableInput?.();
-      if (dl.indicator) dl.indicator.visible = false;
+      dl.disableInput();
+      dl.indicator.visible = false;
     }
 
-    // 3) IF WE’RE ALREADY IN THE PAINT ZONE, re-enable UI & drawing
+    // If already inside a painting area, enable painting immediately
     const paintCtrl = this.el.components['painting-area-controller'];
     if (paintCtrl && paintCtrl.inside) {
       paintCtrl.enablePainting();
@@ -196,6 +180,7 @@ AFRAME.registerComponent('paint-tool-reset', {
     this.rightHand.removeEventListener('gripdown', this.onGrip);
   }
 });
+
 
 
 
