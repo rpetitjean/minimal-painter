@@ -945,134 +945,155 @@ AFRAME.registerComponent('button-colorizer', {
 
 AFRAME.registerComponent('auto-thumbstick-driver', {
   schema: {
-    // Which movement component to apply to the chosen hand.
-    // If you're using your custom one, leave as 'oculus-thumbstick-controls'.
-    movementComponent: { default: 'oculus-thumbstick-controls' },
-    // Attribute string passed to that component (same as you'd put in HTML).
+    movementComponent: { default: 'oculus-thumbstick-controls' }, // your mover
     movement:          { default: 'rig:#rig; speed:0.2' },
-
-    // Stick detection
     deadzone:          { default: 0.25 },
 
-    // Blink hint (a small ring hovering over the stick)
-    blinkRadius:       { default: 0.015 },
-    blinkOpacityMin:   { default: 0.15 },
-    blinkOpacityMax:   { default: 0.55 },
-    blinkPeriodMs:     { default: 1200 },
+    // thumbstick blink
     blinkColor:        { default: '#ffffff' },
-    blinkLift:         { default: 0.010 },       // 1 cm above stick surface
-    // Fallback position if we can't find the stick node (local to controller)
-    fallbackPos:       { default: '0 0.035 -0.022' }, // near the thumb top
-    billboard:         { default: true }          // face camera while blinking
+    intensityMin:      { default: 0.05 },
+    intensityMax:      { default: 0.75 },
+    periodMs:          { default: 1000 }
   },
 
   init () {
     this.left  = document.getElementById('left-hand');
     this.right = document.getElementById('right-hand');
+    this._driver = null;
 
-    this._driver = null;              // chosen hand element
-    this._blinkers = new Map();       // handEl -> a-entity ring
-    this._onMove = this._onMove.bind(this);
+    // per-hand blink targets + original material state
+    this._targets = new Map(); // handEl -> [{node, mats:[{m,orig:{emissive,emissiveIntensity,color}}]}]
 
-    // Start listening for movement
+    this._onStick = this._onStick.bind(this);
+    this._onTrig  = this._onTrig.bind(this);
+
     [this.left, this.right].forEach(h => {
       if (!h) return;
-      h.addEventListener('thumbstickmoved', this._onMove);
-      this._createBlinker(h);
+      h.addEventListener('thumbstickmoved', this._onStick);
+      h.addEventListener('triggerdown',     this._onTrig);
+      this._prepareBlink(h);
     });
   },
 
   remove () {
     [this.left, this.right].forEach(h => {
       if (!h) return;
-      h.removeEventListener('thumbstickmoved', this._onMove);
+      h.removeEventListener('thumbstickmoved', this._onStick);
+      h.removeEventListener('triggerdown',     this._onTrig);
     });
-    this._clearBlinkers();
+    this._restoreAll();
+    this._targets.clear();
   },
 
   tick (time) {
-    if (this._driver) return; // once chosen, no blinking
-    const { blinkOpacityMin:min, blinkOpacityMax:max, blinkPeriodMs:period } = this.data;
-    const t = (time % period) / period;              // 0..1
-    const alpha = min + (max - min) * 0.5 * (1 + Math.sin(t * Math.PI * 2));
+    if (this._driver) return; // stop blinking once chosen
 
-    const cam = this.el.sceneEl?.camera?.el;
-    const camPos = new THREE.Vector3();
-    if (cam?.object3D) cam.object3D.getWorldPosition(camPos);
+    const { intensityMin:min, intensityMax:max, periodMs } = this.data;
+    const t = (time % periodMs) / periodMs;
+    const intensity = min + (max - min) * 0.5 * (1 + Math.sin(t * Math.PI * 2));
 
-    this._blinkers.forEach((ring) => {
-      if (!ring) return;
-      ring.setAttribute('material', `color:${this.data.blinkColor}; opacity:${alpha}; transparent:true; side:double`);
-      if (this.data.billboard && ring.object3D && cam) {
-        ring.object3D.lookAt(camPos);
-      }
+    // Pulse emissive on thumbstick materials
+    this._targets.forEach(list => {
+      list.forEach(entry => {
+        entry.mats.forEach(({m}) => {
+          if (!m) return;
+          if ('emissive' in m) {
+            m.emissive.set(this.data.blinkColor);
+            if ('emissiveIntensity' in m) m.emissiveIntensity = intensity;
+            m.needsUpdate = true;
+          }
+        });
+      });
     });
   },
 
-  // --------- internals ----------
-  _onMove (evt) {
+  // ---------- handlers ----------
+  _onStick (evt) {
     if (this._driver) return;
     const x = evt.detail?.x || 0, y = evt.detail?.y || 0;
     if (Math.hypot(x, y) < this.data.deadzone) return;
+    this._choose(evt.currentTarget);
+  },
 
-    // First stick moved → choose that hand
-    const handEl = evt.currentTarget;
+  _onTrig (evt) {
+    if (this._driver) return;
+    this._choose(evt.currentTarget);
+  },
+
+  // ---------- selection ----------
+  _choose (handEl) {
     this._driver = handEl;
 
-    // Remove movement component from the other hand (if any), just in case.
     const other = (handEl === this.left) ? this.right : this.left;
+    // remove mover from other (if any)
     if (other?.getAttribute(this.data.movementComponent) != null) {
       other.removeAttribute(this.data.movementComponent);
     }
-
-    // Apply locomotion to the chosen hand
+    // apply mover to chosen hand
     handEl.setAttribute(this.data.movementComponent, this.data.movement);
 
-    // Stop and remove all blinkers
-    this._clearBlinkers();
+    // stop blinking + restore original materials on both
+    this._restoreAll();
+    this._targets.clear();
   },
 
-  _createBlinker (handEl) {
-    const ring = document.createElement('a-ring');
-    ring.setAttribute('radius-inner', this.data.blinkRadius * 0.65);
-    ring.setAttribute('radius-outer', this.data.blinkRadius);
-    ring.setAttribute('material', `color:${this.data.blinkColor}; opacity:0.3; transparent:true; side:double`);
-    // Attach where the stick is, if we can find it
+  // ---------- blinking prep ----------
+  _prepareBlink (handEl) {
     const attach = () => {
-      const node = this._findThumbstickNode(handEl);
-      const target = node ? node : handEl.object3D; // fallback to controller root
-      target.add(ring.object3D);
-      if (node) {
-        // lift above stick surface in its local Y
-        ring.object3D.position.set(0, this.data.blinkLift, 0);
-      } else {
-        const [fx, fy, fz] = this.data.fallbackPos.split(' ').map(parseFloat);
-        ring.object3D.position.set(fx, fy, fz + this.data.blinkLift);
-      }
+      const mesh = handEl.getObject3D('mesh');
+      if (!mesh) return;
+
+      const sticks = [];
+      mesh.traverse(n => {
+        if (!n.isMesh || !n.name) return;
+        const name = n.name.toLowerCase();
+        if (name.includes('thumbstick') || name.includes('joystick') || name.includes('stick')) {
+          sticks.push(n);
+        }
+      });
+
+      const entries = [];
+      sticks.forEach(node => {
+        // clone materials and remember originals so we can restore
+        const arr = Array.isArray(node.material) ? node.material : [node.material];
+        const cloned = arr.map(m => (m && m.clone) ? m.clone() : m);
+        node.material = Array.isArray(node.material) ? cloned : cloned[0];
+
+        const mats = (Array.isArray(node.material) ? node.material : [node.material]).map(m => ({
+          m,
+          orig: {
+            hasEm: ('emissive' in m),
+            emissive: ('emissive' in m) ? m.emissive.clone() : null,
+            emissiveIntensity: ('emissiveIntensity' in m) ? m.emissiveIntensity : null,
+            color: m.color ? m.color.clone() : null
+          }
+        }));
+        entries.push({ node, mats });
+      });
+
+      this._targets.set(handEl, entries);
     };
 
     if (handEl.getObject3D('mesh')) attach();
-    else handEl.addEventListener('model-loaded', attach, { once: true });
-
-    // keep a reference to update/remove later
-    handEl.appendChild(ring);
-    this._blinkers.set(handEl, ring);
+    else handEl.addEventListener('model-loaded', attach, { once:true });
   },
 
-  _clearBlinkers () {
-    this._blinkers.forEach(r => r && r.remove());
-    this._blinkers.clear();
-  },
-
-  _findThumbstickNode (handEl) {
-    const mesh = handEl.getObject3D('mesh');
-    if (!mesh) return null;
-    let hit = null;
-    mesh.traverse(n => {
-      if (hit || !n.isMesh || !n.name) return;
-      const name = n.name.toLowerCase();
-      if (name.includes('thumbstick') || name.includes('joystick') || name.includes('stick')) hit = n;
+  _restoreAll () {
+    this._targets.forEach(entries => {
+      entries.forEach(({node, mats}) => {
+        mats.forEach(({m, orig}) => {
+          if (!m) return;
+          if (orig.hasEm && orig.emissive) {
+            m.emissive.copy(orig.emissive);
+            if (orig.emissiveIntensity != null && 'emissiveIntensity' in m) {
+              m.emissiveIntensity = orig.emissiveIntensity;
+            }
+          }
+          if (orig.color && m.color) m.color.copy(orig.color);
+          m.needsUpdate = true;
+        });
+      });
     });
-    return hit;
   }
 });
+
