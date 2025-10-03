@@ -942,3 +942,137 @@ AFRAME.registerComponent('button-colorizer', {
     });
   }
 });
+
+AFRAME.registerComponent('auto-thumbstick-driver', {
+  schema: {
+    // Which movement component to apply to the chosen hand.
+    // If you're using your custom one, leave as 'oculus-thumbstick-controls'.
+    movementComponent: { default: 'oculus-thumbstick-controls' },
+    // Attribute string passed to that component (same as you'd put in HTML).
+    movement:          { default: 'rig:#rig; speed:0.2' },
+
+    // Stick detection
+    deadzone:          { default: 0.25 },
+
+    // Blink hint (a small ring hovering over the stick)
+    blinkRadius:       { default: 0.015 },
+    blinkOpacityMin:   { default: 0.15 },
+    blinkOpacityMax:   { default: 0.55 },
+    blinkPeriodMs:     { default: 1200 },
+    blinkColor:        { default: '#ffffff' },
+    blinkLift:         { default: 0.010 },       // 1 cm above stick surface
+    // Fallback position if we can't find the stick node (local to controller)
+    fallbackPos:       { default: '0 0.035 -0.022' }, // near the thumb top
+    billboard:         { default: true }          // face camera while blinking
+  },
+
+  init () {
+    this.left  = document.getElementById('left-hand');
+    this.right = document.getElementById('right-hand');
+
+    this._driver = null;              // chosen hand element
+    this._blinkers = new Map();       // handEl -> a-entity ring
+    this._onMove = this._onMove.bind(this);
+
+    // Start listening for movement
+    [this.left, this.right].forEach(h => {
+      if (!h) return;
+      h.addEventListener('thumbstickmoved', this._onMove);
+      this._createBlinker(h);
+    });
+  },
+
+  remove () {
+    [this.left, this.right].forEach(h => {
+      if (!h) return;
+      h.removeEventListener('thumbstickmoved', this._onMove);
+    });
+    this._clearBlinkers();
+  },
+
+  tick (time) {
+    if (this._driver) return; // once chosen, no blinking
+    const { blinkOpacityMin:min, blinkOpacityMax:max, blinkPeriodMs:period } = this.data;
+    const t = (time % period) / period;              // 0..1
+    const alpha = min + (max - min) * 0.5 * (1 + Math.sin(t * Math.PI * 2));
+
+    const cam = this.el.sceneEl?.camera?.el;
+    const camPos = new THREE.Vector3();
+    if (cam?.object3D) cam.object3D.getWorldPosition(camPos);
+
+    this._blinkers.forEach((ring) => {
+      if (!ring) return;
+      ring.setAttribute('material', `color:${this.data.blinkColor}; opacity:${alpha}; transparent:true; side:double`);
+      if (this.data.billboard && ring.object3D && cam) {
+        ring.object3D.lookAt(camPos);
+      }
+    });
+  },
+
+  // --------- internals ----------
+  _onMove (evt) {
+    if (this._driver) return;
+    const x = evt.detail?.x || 0, y = evt.detail?.y || 0;
+    if (Math.hypot(x, y) < this.data.deadzone) return;
+
+    // First stick moved → choose that hand
+    const handEl = evt.currentTarget;
+    this._driver = handEl;
+
+    // Remove movement component from the other hand (if any), just in case.
+    const other = (handEl === this.left) ? this.right : this.left;
+    if (other?.getAttribute(this.data.movementComponent) != null) {
+      other.removeAttribute(this.data.movementComponent);
+    }
+
+    // Apply locomotion to the chosen hand
+    handEl.setAttribute(this.data.movementComponent, this.data.movement);
+
+    // Stop and remove all blinkers
+    this._clearBlinkers();
+  },
+
+  _createBlinker (handEl) {
+    const ring = document.createElement('a-ring');
+    ring.setAttribute('radius-inner', this.data.blinkRadius * 0.65);
+    ring.setAttribute('radius-outer', this.data.blinkRadius);
+    ring.setAttribute('material', `color:${this.data.blinkColor}; opacity:0.3; transparent:true; side:double`);
+    // Attach where the stick is, if we can find it
+    const attach = () => {
+      const node = this._findThumbstickNode(handEl);
+      const target = node ? node : handEl.object3D; // fallback to controller root
+      target.add(ring.object3D);
+      if (node) {
+        // lift above stick surface in its local Y
+        ring.object3D.position.set(0, this.data.blinkLift, 0);
+      } else {
+        const [fx, fy, fz] = this.data.fallbackPos.split(' ').map(parseFloat);
+        ring.object3D.position.set(fx, fy, fz + this.data.blinkLift);
+      }
+    };
+
+    if (handEl.getObject3D('mesh')) attach();
+    else handEl.addEventListener('model-loaded', attach, { once: true });
+
+    // keep a reference to update/remove later
+    handEl.appendChild(ring);
+    this._blinkers.set(handEl, ring);
+  },
+
+  _clearBlinkers () {
+    this._blinkers.forEach(r => r && r.remove());
+    this._blinkers.clear();
+  },
+
+  _findThumbstickNode (handEl) {
+    const mesh = handEl.getObject3D('mesh');
+    if (!mesh) return null;
+    let hit = null;
+    mesh.traverse(n => {
+      if (hit || !n.isMesh || !n.name) return;
+      const name = n.name.toLowerCase();
+      if (name.includes('thumbstick') || name.includes('joystick') || name.includes('stick')) hit = n;
+    });
+    return hit;
+  }
+});
