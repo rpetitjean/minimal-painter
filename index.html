@@ -19,10 +19,10 @@
     <a-scene>
 
           <!-- PC & VR Rig -->
-    <a-entity  id="rig" painting-area-controller paint-tool-reset thumbstick-controls>
+    <a-entity  id="rig" painting-area-controller paint-tool-reset >
       <a-box id="camera" camera="fov:75; near: 0.1; far: 700" device-detector="xr: true, mobile: false" position="0 1.7 0"   visible="false" ></a-box>
       <a-entity id="left-hand"  meta-touch-controls="hand: left"></a-entity>
-      <a-entity id="right-hand" meta-touch-controls="hand: right"></a-entity>
+      <a-entity id="right-hand" meta-touch-controls="hand: right" thumbstick-controls></a-entity>
     </a-entity>  
 
       <a-plane position="0 0 -4" rotation="-90 0 0" width="4" height="4" color="#7BC8A4; opacity: 0.0; transparent: true" class="paintingArea"></a-plane>
