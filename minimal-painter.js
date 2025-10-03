@@ -144,8 +144,7 @@ AFRAME.registerComponent('paint-tool-reset', {
       hand.removeAttribute('size-picker');
       hand.removeAttribute('color-picker');
       hand.removeAttribute('oculus-thumbstick-controls');
-      // IMPORTANT: the non-painting hand must have no special colors
-      hand.removeAttribute('touch-button-colors');
+ 
     });
 
     // 2) Painter gets locomotion + draw + active flag
@@ -153,20 +152,7 @@ AFRAME.registerComponent('paint-tool-reset', {
     painter.setAttribute('draw-line', 'color:#EF2D5E; thickness:0.02; minDist:0.005');
     painter.setAttribute('active-brush','');
 
-    // 3) Apply simple, explicit coloring on the painting hand only
-    // Right painter: B=blue, A=red, right GRIP=yellow
-    // Left painter : Y=blue, X=red,  left  GRIP=yellow
-    if (side === 'right') {
-      painter.setAttribute(
-        'touch-button-colors',
-        'a:#ff0000; b:#0000ff; grip:#ffff00; overrideBaseColor:true; useEmissive:true'
-      );
-    } else { // left
-      painter.setAttribute(
-        'touch-button-colors',
-        'x:#ff0000; y:#0000ff; grip:#ffff00; overrideBaseColor:true; useEmissive:true'
-      );
-    }
+  
 
     // Keep painter's input disabled until zone says it's ok
     const dl = painter.components['draw-line'];
