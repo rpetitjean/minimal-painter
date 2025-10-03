@@ -1,3 +1,97 @@
+// ---- Minimal inline tint system (no component needed) ----
+(function () {
+  function isBtn(name, letter) {
+    const n = (name || '').toLowerCase();
+    const pats = [
+      `button_${letter}`, `${letter}_button`,
+      `button-${letter}`, `${letter}-button`,
+      `btn_${letter}`,    `btn-${letter}`,
+      `button${letter}`,  `${letter}button`
+    ];
+    if (pats.some(p => n.includes(p))) return true;
+    const re1 = new RegExp(`(^|[^a-z0-9])button[_-]?${letter}([^a-z0-9]|$)`);
+    const re2 = new RegExp(`(^|[^a-z0-9])${letter}[_-]?button([^a-z0-9]|$)`);
+    return re1.test(n) || re2.test(n);
+  }
+
+  function keyForNode(name) {
+    const n = (name || '').toLowerCase();
+    if (isBtn(n,'a')) return 'a';
+    if (isBtn(n,'b')) return 'b';
+    if (isBtn(n,'x')) return 'x';
+    if (isBtn(n,'y')) return 'y';
+    if (n.includes('grip') || n.includes('squeeze')) return 'grip';
+    if (n.includes('trigger'))  return 'trigger';
+    if (n.includes('thumbstick') || n.includes('joystick') || n.includes('stick')) return 'stick';
+    if (n.includes('menu') || n.includes('system') || n.includes('oculus') || n.includes('meta')) return 'menu';
+    return null;
+  }
+
+  function ensureModel(el, cb) {
+    const mesh = el.getObject3D('mesh');
+    if (mesh) { cb(mesh); return; }
+    const once = () => { el.removeEventListener('model-loaded', once); cb(el.getObject3D('mesh')); };
+    el.addEventListener('model-loaded', once);
+  }
+
+  function cloneIfNeeded(node, bag) {
+    if (bag.has(node.uuid)) return;
+    const mats = Array.isArray(node.material) ? node.material : [node.material];
+    bag.set(node.uuid, mats);
+    const cloned = mats.map(m => (m && m.clone) ? m.clone() : m);
+    node.material = Array.isArray(node.material) ? cloned : cloned[0];
+  }
+
+  function setMatColor(m, hex) {
+    if (!m) return;
+    if (m.color) m.color.set(hex);
+    if ('emissive' in m) {
+      m.emissive.set(hex);
+      if ('emissiveIntensity' in m) m.emissiveIntensity = 0.9;
+    }
+    m.needsUpdate = true;
+  }
+
+  function applySchemeToMesh(mesh, scheme, bag) {
+    mesh.traverse(node => {
+      if (!node.isMesh || !node.name) return;
+      const k = keyForNode(node.name);
+      const hex = k && scheme[k];
+      if (!hex) return;
+      cloneIfNeeded(node, bag);
+      const mats = Array.isArray(node.material) ? node.material : [node.material];
+      mats.forEach(m => setMatColor(m, hex));
+    });
+  }
+
+  function restoreAll(el) {
+    const mesh = el.getObject3D('mesh');
+    const bag  = el.__mpOrigMats;
+    if (!mesh || !bag || !bag.size) return;
+    mesh.traverse(node => {
+      if (!node.isMesh) return;
+      const orig = bag.get(node.uuid);
+      if (!orig) return;
+      node.material = Array.isArray(node.material) ? orig : orig[0];
+      node.material.needsUpdate = true;
+    });
+    bag.clear();
+  }
+
+  // Public API on window.__mp
+  window.__mp = window.__mp || {};
+  window.__mp.tintController = function (handEl, scheme) {
+    if (!handEl) return;
+    ensureModel(handEl, () => {
+      handEl.__mpOrigMats = handEl.__mpOrigMats || new Map();
+      applySchemeToMesh(handEl.getObject3D('mesh'), scheme, handEl.__mpOrigMats);
+    });
+  };
+  window.__mp.untintController = function (handEl) { restoreAll(handEl); };
+})();
+
+
+
 // 1) PAINTING-AREA-CONTROLLER (auto-release when outside area)
 AFRAME.registerComponent('painting-area-controller', {
   schema: {
@@ -106,15 +200,13 @@ AFRAME.registerComponent('paint-tool-reset', {
     this.rightHand    = document.getElementById('right-hand');
     this.onGrip       = this.onGrip.bind(this);
 
-    // locomotion config
     this.movementAttr = { rig: '#rig', speed: 0.2 };
     this.currentSide  = null;
 
-    // swap painter on grip
     this.leftHand .addEventListener('gripdown', this.onGrip);
     this.rightHand.addEventListener('gripdown', this.onGrip);
 
-    // start on right
+    // Default to right-hand
     this.assignTools('right', /* force */ true);
   },
 
@@ -130,7 +222,7 @@ AFRAME.registerComponent('paint-tool-reset', {
     const painter = (side === 'left') ? this.leftHand : this.rightHand;
     const palette = (side === 'left') ? this.rightHand : this.leftHand;
 
-    // 1) CLEAN UP both hands
+    // 1) CLEAN UP both hands (tools/UI)
     [ this.leftHand, this.rightHand ].forEach(hand => {
       const dlComp = hand.components['draw-line'];
       if (dlComp) {
@@ -144,41 +236,37 @@ AFRAME.registerComponent('paint-tool-reset', {
       hand.removeAttribute('size-picker');
       hand.removeAttribute('color-picker');
       hand.removeAttribute('oculus-thumbstick-controls');
-      // IMPORTANT: the non-painting hand must have no special colors
-      hand.removeAttribute('touch-button-colors');
     });
 
-    // 2) Painter gets locomotion + draw + active flag
+    // 2) TINTING: clear any previous tint from both hands
+    __mp.untintController(this.leftHand);
+    __mp.untintController(this.rightHand);
+
+    // Apply the simple scheme to the painting hand
+    if (side === 'right') {
+      // Right painter: B blue, A red, GRIP yellow
+      __mp.tintController(painter, { a:'#ff0000', b:'#0000ff', grip:'#ffff00' });
+    } else {
+      // Left painter: Y blue, X red, GRIP yellow
+      __mp.tintController(painter, { x:'#ff0000', y:'#0000ff', grip:'#ffff00' });
+    }
+
+    // 3) Painter gets locomotion + draw + active flag
     painter.setAttribute('oculus-thumbstick-controls', this.movementAttr);
     painter.setAttribute('draw-line', 'color:#EF2D5E; thickness:0.02; minDist:0.005');
     painter.setAttribute('active-brush','');
 
-    // 3) Apply simple, explicit coloring on the painting hand only
-    // Right painter: B=blue, A=red, right GRIP=yellow
-    // Left painter : Y=blue, X=red,  left  GRIP=yellow
-    if (side === 'right') {
-      painter.setAttribute(
-        'touch-button-colors',
-        'a:#ff0000; b:#0000ff; grip:#ffff00; overrideBaseColor:true; useEmissive:true'
-      );
-    } else { // left
-      painter.setAttribute(
-        'touch-button-colors',
-        'x:#ff0000; y:#0000ff; grip:#ffff00; overrideBaseColor:true; useEmissive:true'
-      );
-    }
-
-    // Keep painter's input disabled until zone says it's ok
+    // start disabled until zone says otherwise
     const dl = painter.components['draw-line'];
     if (dl) {
       dl.disableInput();
       dl.indicator.visible = false;
     }
 
-    // If we're already inside the painting area, enable immediately
+    // if we’re already inside when we swapped, re-enable immediately
     const paintCtrl = this.el.components['painting-area-controller'];
-    if (paintCtrl && paintCtrl.inside) {
-      paintCtrl.enablePainting();
+    if (paintCtrl && paintCtrl.inside && dl) {
+      dl.enableInput();
     }
   },
 
@@ -784,139 +872,4 @@ AFRAME.registerComponent('oculus-thumbstick-controls', {
     }
 });
 
-AFRAME.registerComponent('touch-button-colors', {
-  schema: {
-    a:       { type: 'color', default: '#ff5e66ff' },
-    b:       { type: 'color', default: '#0400ff97' },
-    x:       { type: 'color', default: '#ff5e66ff' },
-    y:       { type: 'color', default: '#0400ff97' },
-    grip:    { type: 'color', default: '#fff569ff' },   // side squeeze
-    trigger: { type: 'color', default: '' },   // index trigger
-    stick:   { type: 'color', default: '' },   // thumbstick cap
-    menu:    { type: 'color', default: '' },   // menu/system
-    // Rendering style
-    useEmissive:        { default: true },
-    emissiveIntensity:  { default:1 },
-    overrideBaseColor:  { default: true },    // also set material.color
-    // Debug
-    debug:              { default: false }
-  },
-
-  init () {
-    this._original = new Map();   // node.uuid -> original material(s)
-    this._targets  = {};          // key -> [nodes]
-    this._onModelLoaded = this._onModelLoaded.bind(this);
-    this.el.addEventListener('model-loaded', this._onModelLoaded);
-
-    // If model already there (rare), apply right away
-    if (this.el.getObject3D('mesh')) this._onModelLoaded();
-  },
-
-  remove () {
-    // restore original materials
-    this._restoreAll();
-    this.el.removeEventListener('model-loaded', this._onModelLoaded);
-  },
-
-  update () {
-    // re-color if colors change
-    if (this.el.getObject3D('mesh')) {
-      this._collectTargets(); // (re)collect if needed
-      this._applyAll();
-    }
-  },
-
-  _onModelLoaded () {
-    this._collectTargets();
-    this._applyAll();
-  },
-
-  _collectTargets () {
-    this._targets = {
-      a: [], b: [], x: [], y: [],
-      grip: [], trigger: [], stick: [], menu: []
-    };
-    const mesh = this.el.getObject3D('mesh');
-    if (!mesh) return;
-
-    const tests = {
-      a:       (n) => this._match(n, ['button_a','a_button','button-a','buttona']) || (this._has(n,'button') && this._has(n,'a')),
-      b:       (n) => this._match(n, ['button_b','b_button','button-b','buttonb']) || (this._has(n,'button') && this._has(n,'b')),
-      x:       (n) => this._match(n, ['button_x','x_button','button-x','buttonx']) || (this._has(n,'button') && this._has(n,'x')),
-      y:       (n) => this._match(n, ['button_y','y_button','button-y','buttony']) || (this._has(n,'button') && this._has(n,'y')),
-      grip:    (n) => this._has(n,'grip') || this._has(n,'squeeze'),
-      trigger: (n) => this._has(n,'trigger'),
-      stick:   (n) => this._has(n,'thumbstick') || this._has(n,'joystick') || this._has(n,'stick'),
-      menu:    (n) => this._has(n,'menu') || this._has(n,'system') || this._has(n,'oculus') || this._has(n,'meta')
-    };
-
-    mesh.traverse((n)=>{
-      if (!n.isMesh || !n.name) return;
-      const name = n.name.toLowerCase().replace(/\s+/g,'');
-      for (const key in tests) {
-        if (tests[key](name)) this._targets[key].push(n);
-      }
-    });
-
-    if (this.data.debug) {
-      for (const k in this._targets) {
-        if (this._targets[k].length) console.log(`[touch-button-colors] Found ${k}:`, this._targets[k].map(n=>n.name));
-      }
-    }
-  },
-
-  _applyAll () {
-    const keys = ['a','b','x','y','grip','trigger','stick','menu'];
-    keys.forEach(k => this._applyColorToNodes(k, this.data[k]));
-  },
-
-  _applyColorToNodes (key, hex) {
-    const nodes = this._targets[key] || [];
-    if (!nodes.length || !hex) return;
-    nodes.forEach(node => this._tintNode(node, hex));
-  },
-
-  _tintNode (node, hex) {
-    // Handle multi-material meshes too
-    const materials = Array.isArray(node.material) ? node.material : [node.material];
-
-    // Store originals once
-    if (!this._original.has(node.uuid)) {
-      this._original.set(node.uuid, materials.map(m => m));
-      // Clone materials so we don’t mutate shared ones
-      const cloned = materials.map(m => m && m.clone ? m.clone() : m);
-      node.material = Array.isArray(node.material) ? cloned : cloned[0];
-    }
-
-    const mats = Array.isArray(node.material) ? node.material : [node.material];
-    mats.forEach(m => {
-      if (!m) return;
-      if (this.data.overrideBaseColor && m.color) m.color.set(hex);
-      if (this.data.useEmissive && 'emissive' in m) {
-        m.emissive.set(hex);
-        if ('emissiveIntensity' in m) m.emissiveIntensity = this.data.emissiveIntensity;
-      }
-      m.needsUpdate = true;
-    });
-  },
-
-  _restoreAll () {
-    const mesh = this.el.getObject3D('mesh');
-    if (!mesh || !this._original.size) return;
-    mesh.traverse((n)=>{
-      if (!n.isMesh) return;
-      const orig = this._original.get(n.uuid);
-      if (!orig) return;
-      n.material = Array.isArray(n.material) ? orig : orig[0];
-    });
-    this._original.clear();
-  },
-
-  _match (name, patterns) {
-    return patterns.some(p => name.includes(p));
-  },
-  _has (name, token) {
-    return name.includes(token);
-  }
-});
 
