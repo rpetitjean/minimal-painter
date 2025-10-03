@@ -680,7 +680,7 @@ AFRAME.registerComponent('color-picker',{
 
 AFRAME.registerComponent('thumbstick-controls', {
     schema: {
-        acceleration: { default: 15 },
+        acceleration: { default: 25 },
         rigSelector: {default: "#rig"},
         fly: { default: false },
         controllerOriented: { default: false },
@@ -942,5 +942,3 @@ AFRAME.registerComponent('button-colorizer', {
     });
   }
 });
-
-
