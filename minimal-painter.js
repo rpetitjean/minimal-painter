@@ -1,4 +1,3 @@
-
 // 1) PAINTING-AREA-CONTROLLER (auto-release when outside area)
 AFRAME.registerComponent('painting-area-controller', {
   schema: {
@@ -107,19 +106,16 @@ AFRAME.registerComponent('paint-tool-reset', {
     this.rightHand    = document.getElementById('right-hand');
     this.onGrip       = this.onGrip.bind(this);
 
+    // locomotion config
     this.movementAttr = { rig: '#rig', speed: 0.2 };
     this.currentSide  = null;
 
+    // swap painter on grip
     this.leftHand .addEventListener('gripdown', this.onGrip);
     this.rightHand.addEventListener('gripdown', this.onGrip);
 
-    // Default to right-hand
+    // start on right
     this.assignTools('right', /* force */ true);
-  },
-
-  remove() {
-    this.leftHand .removeEventListener('gripdown', this.onGrip);
-    this.rightHand.removeEventListener('gripdown', this.onGrip);
   },
 
   onGrip(evt) {
@@ -134,25 +130,22 @@ AFRAME.registerComponent('paint-tool-reset', {
     const painter = (side === 'left') ? this.leftHand : this.rightHand;
     const palette = (side === 'left') ? this.rightHand : this.leftHand;
 
-    // 1) CLEAN UP both hands (tools/UI + button tint)
+    // 1) CLEAN UP both hands
     [ this.leftHand, this.rightHand ].forEach(hand => {
       const dlComp = hand.components['draw-line'];
       if (dlComp) {
         dlComp.disableInput();
-        if (dlComp.indicator) {
-          hand.object3D.remove(dlComp.indicator);
-          if (dlComp.indicator.geometry) dlComp.indicator.geometry.dispose();
-          if (dlComp.indicator.material) dlComp.indicator.material.dispose();
-        }
+        hand.object3D.remove(dlComp.indicator);
+        if (dlComp.indicator?.geometry)  dlComp.indicator.geometry.dispose();
+        if (dlComp.indicator?.material)  dlComp.indicator.material.dispose();
       }
       hand.removeAttribute('draw-line');
       hand.removeAttribute('active-brush');
       hand.removeAttribute('size-picker');
       hand.removeAttribute('color-picker');
       hand.removeAttribute('oculus-thumbstick-controls');
-
-      // remove any previous colorizer (restores original materials + removes overlays)
-      hand.removeAttribute('button-colorizer');
+      // IMPORTANT: the non-painting hand must have no special colors
+      hand.removeAttribute('touch-button-colors');
     });
 
     // 2) Painter gets locomotion + draw + active flag
@@ -160,30 +153,38 @@ AFRAME.registerComponent('paint-tool-reset', {
     painter.setAttribute('draw-line', 'color:#EF2D5E; thickness:0.02; minDist:0.005');
     painter.setAttribute('active-brush','');
 
-    // start disabled until zone says otherwise
+    // 3) Apply simple, explicit coloring on the painting hand only
+    // Right painter: B=blue, A=red, right GRIP=yellow
+    // Left painter : Y=blue, X=red,  left  GRIP=yellow
+    if (side === 'right') {
+      painter.setAttribute(
+        'touch-button-colors',
+        'a:#ff0000; b:#0000ff; grip:#ffff00; overrideBaseColor:true; useEmissive:true'
+      );
+    } else { // left
+      painter.setAttribute(
+        'touch-button-colors',
+        'x:#ff0000; y:#0000ff; grip:#ffff00; overrideBaseColor:true; useEmissive:true'
+      );
+    }
+
+    // Keep painter's input disabled until zone says it's ok
     const dl = painter.components['draw-line'];
     if (dl) {
       dl.disableInput();
-      if (dl.indicator) dl.indicator.visible = false;
+      dl.indicator.visible = false;
     }
 
-    // 3) Palette gets the color picker UI
-    palette.setAttribute('color-picker','');
-
-    // 4) Apply button colors ONLY to the painting hand
-    if (side === 'right') {
-      // Right painter: A red, B blue, GRIP yellow
-      painter.setAttribute('button-colorizer', 'a:#ff0000; b:#0000ff; grip:#ffff00');
-    } else {
-      // Left painter: X red, Y blue, GRIP yellow
-      painter.setAttribute('button-colorizer', 'x:#ff0000; y:#0000ff; grip:#ffff00');
-    }
-
-    // 5) If already inside painting zone, enable immediately
+    // If we're already inside the painting area, enable immediately
     const paintCtrl = this.el.components['painting-area-controller'];
-    if (paintCtrl && paintCtrl.inside && dl) {
-      dl.enableInput();
+    if (paintCtrl && paintCtrl.inside) {
+      paintCtrl.enablePainting();
     }
+  },
+
+  remove() {
+    this.leftHand .removeEventListener('gripdown', this.onGrip);
+    this.rightHand.removeEventListener('gripdown', this.onGrip);
   }
 });
 
@@ -199,13 +200,7 @@ AFRAME.registerComponent('hand-swapper', {
     this.leftHand .addEventListener('gripdown', this.onGrip);
     this.rightHand.addEventListener('gripdown', this.onGrip);
 
-    // start on right by default
     this.activate('right');
-  },
-
-  remove() {
-    this.leftHand .removeEventListener('gripdown', this.onGrip);
-    this.rightHand.removeEventListener('gripdown', this.onGrip);
   },
 
   onGrip(evt) {
@@ -214,39 +209,75 @@ AFRAME.registerComponent('hand-swapper', {
   },
 
   activate(side) {
-    // 1) clean both hands, but DO NOT set colors here
+    const painter = side === 'left' ? this.leftHand : this.rightHand;
+    const palette = side === 'left' ? this.rightHand : this.leftHand;
+
+    // 1) remove ALL paint/move attributes from both hands
     [this.leftHand, this.rightHand].forEach(h => {
+      // be thorough with draw-line cleanup
+      const dl = h.components['draw-line'];
+      if (dl) {
+        dl.disableInput?.();
+        if (dl.indicator) {
+          h.object3D.remove(dl.indicator);
+          dl.indicator.geometry?.dispose?.();
+          dl.indicator.material?.dispose?.();
+        }
+      }
       h.removeAttribute('oculus-thumbstick-controls');
       h.removeAttribute('draw-line');
       h.removeAttribute('size-picker');
       h.removeAttribute('color-picker');
       h.removeAttribute('active-brush');
-      // ensure this component never leaves a tint
+      // strip colors; we’ll re-attach to the painter below
       h.removeAttribute('touch-button-colors');
     });
 
-    // 2) choose painter/palette
-    const painter = side === 'left' ? this.leftHand : this.rightHand;
-    const palette = side === 'left' ? this.rightHand : this.leftHand;
-
-    // 3) painter setup (no colors here)
+    // 2) decide which is painter vs. palette
+    // 3) give painter movement + draw + size + mark it
     painter.setAttribute('oculus-thumbstick-controls', this.thumbAttr);
     painter.setAttribute('draw-line', 'color:#EF2D5E; thickness:0.02; minDist:0.005');
     painter.setAttribute('size-picker','');
     painter.setAttribute('active-brush','');
 
-    // start disabled until zone says otherwise
-    const dl = painter.components['draw-line'];
-    if (dl) dl.disableInput();
-
-    // if already inside painting zone, enable immediately
-    const paintCtrl = this.el.components['painting-area-controller'];
-    if (paintCtrl && paintCtrl.inside && dl) {
-      dl.enableInput();
+    // Painter-only button colors (per-hand mapping)
+    if (painter === this.rightHand) {
+      painter.setAttribute('touch-button-colors', {
+        a: '#ff5e66ff',   // red
+        b: '#0400ff97',   // blue
+        x: '', y: '',
+        grip: '#fff569ff',// yellow
+        trigger: '', stick: '', menu: '',
+        useEmissive: true, emissiveIntensity: 1, overrideBaseColor: true
+      });
+    } else {
+      painter.setAttribute('touch-button-colors', {
+        x: '#ff5e66ff',   // red
+        y: '#0400ff97',   // blue
+        a: '', b: '',
+        grip: '#fff569ff',// yellow
+        trigger: '', stick: '', menu: '',
+        useEmissive: true, emissiveIntensity: 1, overrideBaseColor: true
+      });
     }
 
-    // 4) palette hand UI
+    // start disabled until zone says otherwise
+    const dl = painter.components['draw-line'];
+    if (dl) dl.disableInput?.();
+
+    // if we’re already inside when we swapped, re-enable immediately
+    const paintCtrl = this.el.components['painting-area-controller'];
+    if (paintCtrl && paintCtrl.inside && dl) {
+      dl.enableInput?.();
+    }
+
+    // 4) other hand just gets the color-picker
     palette.setAttribute('color-picker','');
+  },
+
+  remove() {
+    this.leftHand .removeEventListener('gripdown', this.onGrip);
+    this.rightHand.removeEventListener('gripdown', this.onGrip);
   }
 });
 
@@ -783,210 +814,139 @@ AFRAME.registerComponent('oculus-thumbstick-controls', {
     }
 });
 
-
-AFRAME.registerComponent('button-colorizer', {
+AFRAME.registerComponent('touch-button-colors', {
   schema: {
-    // Provide only the keys you want to color. Empty = ignore.
-    a:       { type: 'color', default: '' },
-    b:       { type: 'color', default: '' },
-    x:       { type: 'color', default: '' },
-    y:       { type: 'color', default: '' },
-    grip:    { type: 'color', default: '' },
-
-    // Material style for real tints
-    useEmissive:       { default: true },
-    emissiveIntensity: { default: 0.9 },
-    overrideBaseColor: { default: true },
-
-    // Overlay fallback (when buttons share a mesh)
-    overlayRadius: { default: 0.014 }, // 14 mm circle
-    overlayLift:   { default: 0.004 }, // 4 mm above surface
-
+    a:       { type: 'color', default: '#ff5e66ff' },
+    b:       { type: 'color', default: '#0400ff97' },
+    x:       { type: 'color', default: '#ff5e66ff' },
+    y:       { type: 'color', default: '#0400ff97' },
+    grip:    { type: 'color', default: '#fff569ff' },   // side squeeze
+    trigger: { type: 'color', default: '' },   // index trigger
+    stick:   { type: 'color', default: '' },   // thumbstick cap
+    menu:    { type: 'color', default: '' },   // menu/system
+    // Rendering style
+    useEmissive:        { default: true },
+    emissiveIntensity:  { default:1 },
+    overrideBaseColor:  { default: true },    // also set material.color
     // Debug
-    debug: { default: false }
+    debug:              { default: false }
   },
 
   init () {
-    this._original = new Map(); // node.uuid -> original materials
-    this._overlays = [];
+    this._original = new Map();   // node.uuid -> original material(s)
+    this._targets  = {};          // key -> [nodes]
     this._onModelLoaded = this._onModelLoaded.bind(this);
-
     this.el.addEventListener('model-loaded', this._onModelLoaded);
+
+    // If model already there (rare), apply right away
     if (this.el.getObject3D('mesh')) this._onModelLoaded();
   },
 
   remove () {
-    this._restoreMaterials();
-    this._removeOverlays();
+    // restore original materials
+    this._restoreAll();
     this.el.removeEventListener('model-loaded', this._onModelLoaded);
   },
 
   update () {
+    // re-color if colors change
     if (this.el.getObject3D('mesh')) {
-      this._apply();
+      this._collectTargets(); // (re)collect if needed
+      this._applyAll();
     }
   },
 
-  // ---------- events ----------
   _onModelLoaded () {
-    this._apply();
+    this._collectTargets();
+    this._applyAll();
   },
 
-  // ---------- core ----------
-  _apply () {
+  _collectTargets () {
+    this._targets = {
+      a: [], b: [], x: [], y: [],
+      grip: [], trigger: [], stick: [], menu: []
+    };
     const mesh = this.el.getObject3D('mesh');
     if (!mesh) return;
 
-    // reset previous pass
-    this._removeOverlays();
-    if (!this._original.size) { /* first time */ } else { this._restoreMaterials(); }
+    const tests = {
+      a:       (n) => this._match(n, ['button_a','a_button','button-a','buttona']) || (this._has(n,'button') && this._has(n,'a')),
+      b:       (n) => this._match(n, ['button_b','b_button','button-b','buttonb']) || (this._has(n,'button') && this._has(n,'b')),
+      x:       (n) => this._match(n, ['button_x','x_button','button-x','buttonx']) || (this._has(n,'button') && this._has(n,'x')),
+      y:       (n) => this._match(n, ['button_y','y_button','button-y','buttony']) || (this._has(n,'button') && this._has(n,'y')),
+      grip:    (n) => this._has(n,'grip') || this._has(n,'squeeze'),
+      trigger: (n) => this._has(n,'trigger'),
+      stick:   (n) => this._has(n,'thumbstick') || this._has(n,'joystick') || this._has(n,'stick'),
+      menu:    (n) => this._has(n,'menu') || this._has(n,'system') || this._has(n,'oculus') || this._has(n,'meta')
+    };
 
-    const nodes = this._collectNodes(mesh);
-    if (this.data.debug) {
-      for (const k in nodes) if (nodes[k].length) console.log('[button-colorizer] nodes', k, nodes[k].map(n=>n.name));
-    }
-
-    // Grip: usually separable
-    if (this.data.grip) this._tintNodes(nodes.grip, this.data.grip);
-
-    // Decide pair by hand side
-    const side = this._getHandSide();
-    const pair = side === 'right'
-      ? [{key:'a', col:this.data.a}, {key:'b', col:this.data.b}]
-      : [{key:'x', col:this.data.x}, {key:'y', col:this.data.y}];
-
-    const n1 = nodes[pair[0].key];
-    const n2 = nodes[pair[1].key];
-
-    const separable = this._areDistinct(n1, n2);
-
-    if (separable) {
-      pair.forEach(p => p.col && this._tintNodes(nodes[p.key], p.col));
-    } else {
-      // Shared mesh → overlays
-      pair.forEach(p => p.col && this._addOverlay(p.key, p.col));
-      if (this.data.grip && !nodes.grip.length) this._addOverlay('grip', this.data.grip, this.data.overlayRadius * 0.85);
-    }
-  },
-
-  _collectNodes (mesh) {
-    const map = { a:[], b:[], x:[], y:[], grip:[] };
-    mesh.traverse(node => {
-      if (!node.isMesh || !node.name) return;
-      const k = this._keyForNode(node.name);
-      if (k && map[k]) map[k].push(node);
-    });
-    return map;
-  },
-
-  _areDistinct (arr1, arr2) {
-    if (!arr1.length || !arr2.length) return false;
-    // if any node in arr1 is not in arr2 → consider distinct
-    return arr1.some(n => !arr2.some(m => m.uuid === n.uuid));
-  },
-
-  _tintNodes (nodes, hex) {
-    nodes.forEach(node => {
-      // clone materials once; store originals for restore
-      if (!this._original.has(node.uuid)) {
-        const mats = Array.isArray(node.material) ? node.material : [node.material];
-        this._original.set(node.uuid, mats);
-        const cloned = mats.map(m => (m && m.clone) ? m.clone() : m);
-        node.material = Array.isArray(node.material) ? cloned : cloned[0];
+    mesh.traverse((n)=>{
+      if (!n.isMesh || !n.name) return;
+      const name = n.name.toLowerCase().replace(/\s+/g,'');
+      for (const key in tests) {
+        if (tests[key](name)) this._targets[key].push(n);
       }
-      const mats2 = Array.isArray(node.material) ? node.material : [node.material];
-      mats2.forEach(m => {
-        if (!m) return;
-        if (this.data.overrideBaseColor && m.color) m.color.set(hex);
-        if (this.data.useEmissive && 'emissive' in m) {
-          m.emissive.set(hex);
-          if ('emissiveIntensity' in m) m.emissiveIntensity = this.data.emissiveIntensity;
-        }
-        m.needsUpdate = true;
-      });
+    });
+
+    if (this.data.debug) {
+      for (const k in this._targets) {
+        if (this._targets[k].length) console.log(`[touch-button-colors] Found ${k}:`, this._targets[k].map(n=>n.name));
+      }
+    }
+  },
+
+  _applyAll () {
+    const keys = ['a','b','x','y','grip','trigger','stick','menu'];
+    keys.forEach(k => this._applyColorToNodes(k, this.data[k]));
+  },
+
+  _applyColorToNodes (key, hex) {
+    const nodes = this._targets[key] || [];
+    if (!nodes.length || !hex) return;
+    nodes.forEach(node => this._tintNode(node, hex));
+  },
+
+  _tintNode (node, hex) {
+    // Handle multi-material meshes too
+    const materials = Array.isArray(node.material) ? node.material : [node.material];
+
+    // Store originals once
+    if (!this._original.has(node.uuid)) {
+      this._original.set(node.uuid, materials.map(m => m));
+      // Clone materials so we don’t mutate shared ones
+      const cloned = materials.map(m => m && m.clone ? m.clone() : m);
+      node.material = Array.isArray(node.material) ? cloned : cloned[0];
+    }
+
+    const mats = Array.isArray(node.material) ? node.material : [node.material];
+    mats.forEach(m => {
+      if (!m) return;
+      if (this.data.overrideBaseColor && m.color) m.color.set(hex);
+      if (this.data.useEmissive && 'emissive' in m) {
+        m.emissive.set(hex);
+        if ('emissiveIntensity' in m) m.emissiveIntensity = this.data.emissiveIntensity;
+      }
+      m.needsUpdate = true;
     });
   },
 
-  _restoreMaterials () {
+  _restoreAll () {
     const mesh = this.el.getObject3D('mesh');
     if (!mesh || !this._original.size) return;
-    mesh.traverse(node => {
-      const orig = this._original.get(node.uuid);
+    mesh.traverse((n)=>{
+      if (!n.isMesh) return;
+      const orig = this._original.get(n.uuid);
       if (!orig) return;
-      node.material = Array.isArray(node.material) ? orig : orig[0];
-      node.material.needsUpdate = true;
+      n.material = Array.isArray(n.material) ? orig : orig[0];
     });
     this._original.clear();
   },
 
-  _removeOverlays () {
-    this._overlays.forEach(e => e.remove());
-    this._overlays.length = 0;
+  _match (name, patterns) {
+    return patterns.some(p => name.includes(p));
   },
-
-  // ---------- overlays ----------
-  _addOverlay (key, color, radius = this.data.overlayRadius) {
-    const pos = this._overlayPos(key);
-    if (!pos) return;
-    const lift = this.data.overlayLift;
-    const c = document.createElement('a-circle');
-    c.classList.add('mp-btn-overlay');
-    c.setAttribute('radius', radius);
-    c.setAttribute('segments', 24);
-    c.setAttribute('material', `color:${color}; opacity:1; side:double; transparent:false`);
-    c.setAttribute('position', `${pos.x} ${pos.y} ${pos.z + lift}`);
-    this.el.appendChild(c);
-    this._overlays.push(c);
-  },
-
-  _overlayPos (key) {
-    // Approximate local-space positions (meters), tuned for Quest controllers
-    const side = this._getHandSide();
-    const P = {
-      right: {
-        a:    { x:  0.021, y: 0.035, z: -0.030 },
-        b:    { x: -0.014, y: 0.045, z: -0.030 },
-        grip: { x:  0.030, y: 0.010, z:  0.000 }
-      },
-      left: {
-        x:    { x: -0.021, y: 0.035, z: -0.030 },
-        y:    { x:  0.014, y: 0.045, z: -0.030 },
-        grip: { x: -0.030, y: 0.010, z:  0.000 }
-      }
-    };
-    return P[side] && P[side][key];
-  },
-
-  // ---------- matching & helpers ----------
-  _getHandSide() {
-    const mtc = this.el.getAttribute('meta-touch-controls');
-    if (mtc && mtc.hand) return mtc.hand;
-    const id = (this.el.id||'').toLowerCase();
-    if (id.includes('right')) return 'right';
-    if (id.includes('left'))  return 'left';
-    return 'right';
-  },
-
-  _keyForNode (name) {
-    const n = (name || '').toLowerCase();
-    if (this._btn(n,'a')) return 'a';
-    if (this._btn(n,'b')) return 'b';
-    if (this._btn(n,'x')) return 'x';
-    if (this._btn(n,'y')) return 'y';
-    if (n.includes('grip') || n.includes('squeeze')) return 'grip';
-    return null;
-  },
-
-  _btn(name, letter) {
-    const pats = [
-      `button_${letter}`, `${letter}_button`,
-      `button-${letter}`, `${letter}-button`,
-      `btn_${letter}`,    `btn-${letter}`,
-      `button${letter}`,  `${letter}button`
-    ];
-    if (pats.some(p => name.includes(p))) return true;
-    const re1 = new RegExp(`(^|[^a-z0-9])button[_-]?${letter}([^a-z0-9]|$)`);
-    const re2 = new RegExp(`(^|[^a-z0-9])${letter}[_-]?button([^a-z0-9]|$)`);
-    return re1.test(name) || re2.test(name);
+  _has (name, token) {
+    return name.includes(token);
   }
 });
+
