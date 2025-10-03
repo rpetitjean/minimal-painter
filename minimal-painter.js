@@ -19,8 +19,10 @@ AFRAME.registerComponent('painting-area-controller', {
   tick() {
     if (!this.areas.length) return;
 
+    // Rig world position
     this.el.object3D.getWorldPosition(this._rigPos);
 
+    // Are we inside any area?
     let nowInside = false;
     for (let i = 0; i < this.areas.length; i++) {
       const area = this.areas[i];
@@ -29,12 +31,22 @@ AFRAME.registerComponent('painting-area-controller', {
       if (this._box.containsPoint(this._rigPos)) { nowInside = true; break; }
     }
 
+    // While outside, force-stop any active stroke every frame.
     if (!nowInside) this._forceReleaseBothHands();
 
+    // Enter/leave transitions.
     if (nowInside === this.inside) return;
     this.inside = nowInside;
-    if (nowInside) this.enablePainting();
-    else           this.disablePainting();
+
+    if (nowInside) {
+      this.enablePainting();
+      // Locomotion gate follows the current painter.
+      const painter = document.querySelector('[active-brush]');
+      this._gateLocomotionToPainter(painter);
+    } else {
+      this.disablePainting();
+      this._enableLocomotionBoth();
+    }
   },
 
   enablePainting() {
@@ -52,8 +64,8 @@ AFRAME.registerComponent('painting-area-controller', {
     painter.setAttribute('size-picker','');
     if (palette) palette.setAttribute('color-picker','');
 
-    // --- Apply button colors (only while inside) ---
-    this._applyTints(painter, palette);
+    // Gate locomotion to the current painter.
+    this._gateLocomotionToPainter(painter);
   },
 
   disablePainting() {
@@ -69,35 +81,38 @@ AFRAME.registerComponent('painting-area-controller', {
     if (painter) painter.removeAttribute('size-picker');
     if (palette) palette.removeAttribute('color-picker');
 
-    // Clear button colors on BOTH hands when outside.
-    this._clearTints();
+    this._enableLocomotionBoth();
   },
 
-  _applyTints(painter, palette) {
-    // Ensure the component is present (no HTML change needed)
-    [painter, palette].forEach(h => {
-      if (!h) return;
-      if (!h.components['button-colorizer']) h.setAttribute('button-colorizer', '');
-    });
-
-    const isRight = (painter === this.rightHand);
-    const scheme  = isRight
-      ? { a:'#ff0000', b:'#0000ff', grip:'#ffff00' }  // Right = A red, B blue, Grip yellow
-      : { x:'#ff0000', y:'#0000ff', grip:'#ffff00' }; // Left  = X red, Y blue, Grip yellow
-
-    painter.components['button-colorizer'].applyScheme(scheme);
-    if (palette && palette.components['button-colorizer']) {
-      palette.components['button-colorizer'].clearScheme();
+  // --- Locomotion helpers ---
+  _ensureThumbstick(handEl) {
+    if (!handEl) return;
+    if (!handEl.components['thumbstick-controls']) {
+      // Keep your existing config minimal; rigSelector is the key bit.
+      handEl.setAttribute('thumbstick-controls', 'rigSelector', '#rig');
     }
   },
 
-  _clearTints() {
-    [this.leftHand, this.rightHand].forEach(h => {
-      const bc = h && h.components['button-colorizer'];
-      if (bc) bc.clearScheme();
-    });
+  _setLocomotionEnabled(handEl, enabled) {
+    if (!handEl) return;
+    this._ensureThumbstick(handEl);
+    handEl.setAttribute('thumbstick-controls', 'enabled', !!enabled);
   },
 
+  _gateLocomotionToPainter(painter) {
+    // If no painter, fail safe: both enabled.
+    if (!painter) { this._enableLocomotionBoth(); return; }
+    const isLeft = (painter === this.leftHand);
+    this._setLocomotionEnabled(this.leftHand,  isLeft);
+    this._setLocomotionEnabled(this.rightHand, !isLeft);
+  },
+
+  _enableLocomotionBoth() {
+    this._setLocomotionEnabled(this.leftHand,  true);
+    this._setLocomotionEnabled(this.rightHand, true);
+  },
+
+  // --- helper: finish the stroke on BOTH hands immediately ---
   _forceReleaseBothHands() {
     [this.leftHand, this.rightHand].forEach(hand => {
       if (!hand) return;
@@ -120,16 +135,13 @@ AFRAME.registerComponent('paint-tool-reset', {
     this.leftHand     = document.getElementById('left-hand');
     this.rightHand    = document.getElementById('right-hand');
     this.onGrip       = this.onGrip.bind(this);
-
-    // locomotion config
-    this.movementAttr = { rig: '#rig', speed: 0.2 };
     this.currentSide  = null;
 
-    // swap painter on grip
+    // Swap painter on grip.
     this.leftHand .addEventListener('gripdown', this.onGrip);
     this.rightHand.addEventListener('gripdown', this.onGrip);
 
-    // start on right
+    // Start on right.
     this.assignTools('right', /* force */ true);
   },
 
@@ -145,42 +157,41 @@ AFRAME.registerComponent('paint-tool-reset', {
     const painter = (side === 'left') ? this.leftHand : this.rightHand;
     const palette = (side === 'left') ? this.rightHand : this.leftHand;
 
-    // 1) CLEAN UP both hands
+    // Clean paint UI from both hands (do NOT remove thumbstick-controls).
     [ this.leftHand, this.rightHand ].forEach(hand => {
       const dlComp = hand.components['draw-line'];
       if (dlComp) {
         dlComp.disableInput();
         hand.object3D.remove(dlComp.indicator);
-        if (dlComp.indicator?.geometry)  dlComp.indicator.geometry.dispose();
-        if (dlComp.indicator?.material)  dlComp.indicator.material.dispose();
+        dlComp.indicator?.geometry?.dispose?.();
+        dlComp.indicator?.material?.dispose?.();
       }
       hand.removeAttribute('draw-line');
       hand.removeAttribute('active-brush');
       hand.removeAttribute('size-picker');
       hand.removeAttribute('color-picker');
-      hand.removeAttribute('thumbstick-controls');
- 
+      // Keep locomotion component attached on both hands.
+      if (!hand.components['thumbstick-controls']) {
+        hand.setAttribute('thumbstick-controls', 'rigSelector', '#rig');
+      }
     });
 
-    // 2) Painter gets locomotion + draw + active flag
-    painter.setAttribute('thumbstick-controls', this.movementAttr);
+    // Painter tools.
     painter.setAttribute('draw-line', 'color:#EF2D5E; thickness:0.02; minDist:0.005');
     painter.setAttribute('active-brush','');
 
-  
-
-    // Keep painter's input disabled until zone says it's ok
+    // Start disabled until zone says otherwise.
     const dl = painter.components['draw-line'];
-    if (dl) {
-      dl.disableInput();
-      dl.indicator.visible = false;
-    }
+    if (dl) { dl.disableInput(); dl.indicator.visible = false; }
 
-    // If we're already inside the painting area, enable immediately
+    // If already inside the painting area, re-enable painting AND re-gate locomotion to this painter.
     const paintCtrl = this.el.components['painting-area-controller'];
     if (paintCtrl && paintCtrl.inside) {
-      paintCtrl.enablePainting();
+      paintCtrl.enablePainting(); // this also calls _gateLocomotionToPainter internally
     }
+
+    // Palette UI.
+    palette.setAttribute('color-picker','');
   },
 
   remove() {
@@ -188,7 +199,6 @@ AFRAME.registerComponent('paint-tool-reset', {
     this.rightHand.removeEventListener('gripdown', this.onGrip);
   }
 });
-
 
 
 AFRAME.registerComponent('hand-swapper', {
