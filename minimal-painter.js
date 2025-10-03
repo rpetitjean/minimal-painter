@@ -679,261 +679,122 @@ AFRAME.registerComponent('color-picker',{
 
 
 AFRAME.registerComponent('thumbstick-controls', {
-  schema: {
-    // Movement target
-    rigSelector:        { default: '#rig' },
+    schema: {
+        acceleration: { default: 25 },
+        rigSelector: {default: "#rig"},
+        fly: { default: false },
+        controllerOriented: { default: false },
+        adAxis: {default: 'x', oneOf: ['x', 'y', 'z']},
+        wsAxis: {default: 'z', oneOf: ['x', 'y', 'z']},
+        enabled: {default: true},
+        adEnabled: {default: true},
+        adInverted: {default: false},
+        wsEnabled: {default: true},
+        wsInverted: {default: false}
+    },
+    init: function () {
+        this.easing = 1.1;
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.tsData = new THREE.Vector2(0, 0);
 
-    // Motion tuning
-    acceleration:       { default: 25 },
-    easing:             { default: 1.1 },   // damping factor (higher = more damping)
-    deadzone:           { default: 0.25 },
+        this.thumbstickMoved = this.thumbstickMoved.bind(this)
+        this.el.addEventListener('thumbstickmoved', this.thumbstickMoved);
+    },
+    update: function() {
+        this.rigElement = document.querySelector(this.data.rigSelector)
+    },
+    tick: function (time, delta) {
+        if (!this.el.sceneEl.is('vr-mode')) return;
+        var data = this.data;
+        var el = this.rigElement
+        var velocity = this.velocity;
+        //console.log("here", this.tsData, this.tsData.length())
+        if (!velocity[data.adAxis] && !velocity[data.wsAxis] && !this.tsData.length()) { return; }
 
-    // Axes (on the rig)
-    adAxis:             { default: 'x', oneOf: ['x','y','z'] }, // left/right
-    wsAxis:             { default: 'z', oneOf: ['x','y','z'] }, // forward/back
-    fly:                { default: false },  // allow Y motion
+        // Update velocity.
+        delta = delta / 1000;
+        this.updateVelocity(delta);
 
-    // Enables
-    enabled:            { default: true },
-    adEnabled:          { default: true },
-    adInverted:         { default: false },
-    wsEnabled:          { default: true },
-    wsInverted:         { default: false },
+        if (!velocity[data.adAxis] && !velocity[data.wsAxis]) { return; }
 
-    // Blink (thumbstick mesh itself) until a driver is selected
-    blinkColor:         { default: '#ffffff' },
-    intensityMin:       { default: 0.05 },
-    intensityMax:       { default: 0.75 },
-    periodMs:           { default: 1000 }
-  },
+        // Get movement vector and translate position.
+        el.object3D.position.add(this.getMovementVector(delta));
+    },
+    updateVelocity: function (delta) {
+        var acceleration;
+        var adAxis;
+        var adSign;
+        var data = this.data;
+        var velocity = this.velocity;
+        var wsAxis;
+        var wsSign;
+        const CLAMP_VELOCITY = 0.00001;
 
-  init () {
-    // Elements
-    this.left  = document.getElementById('left-hand');
-    this.right = document.getElementById('right-hand');
+        adAxis = data.adAxis;
+        wsAxis = data.wsAxis;
 
-    // Movement state
-    this.rig = null;
-    this.driver = null;                        // chosen hand element
-    this.velocity = new THREE.Vector3();
-    this.tsData   = new THREE.Vector2();      // latest thumbstick from driver
-
-    // Blink bookkeeping (clone+restore materials)
-    this._blinkTargets = new Map();           // handEl -> [{node, mats:[{m, orig:{...}}]}]
-
-    // Bind handlers
-    this._onStick  = this._onStick.bind(this);
-    this._onTrig   = this._onTrig.bind(this);
-
-    // Listen on both hands for selection gestures
-    [this.left, this.right].forEach(h => {
-      if (!h) return;
-      h.addEventListener('thumbstickmoved', this._onStick);
-      h.addEventListener('triggerdown',     this._onTrig);
-      this._prepareBlink(h);
-    });
-  },
-
-  update () {
-    this.rig = document.querySelector(this.data.rigSelector) || this.el;
-  },
-
-  remove () {
-    [this.left, this.right].forEach(h => {
-      if (!h) return;
-      h.removeEventListener('thumbstickmoved', this._onStick);
-      h.removeEventListener('triggerdown',     this._onTrig);
-    });
-    this._restoreAll();
-    this._blinkTargets.clear();
-  },
-
-  // ---------------- movement loop ----------------
-  tick (time, deltaMs) {
-    if (!this.data.enabled || !this.rig || !this.el.sceneEl?.is('vr-mode')) return;
-
-    // Blink both sticks until a driver is chosen
-    if (!this.driver) {
-      this._tickBlink(time);
-      return;
-    }
-
-    // Physics-damped velocity update
-    const delta = deltaMs / 1000;
-    if (delta > 0.2) { this.velocity.set(0,0,0); return; }
-
-    this._updateVelocity(delta);
-
-    const d = this.data, v = this.velocity;
-    if (!v[d.adAxis] && !v[d.wsAxis]) return;
-
-    // Convert to camera-heading space
-    const move = this._getMovementVector(delta);
-    if (!d.fly) move.y = 0;
-
-    // Apply to rig
-    this.rig.object3D.position.add(move);
-  },
-
-  _updateVelocity (delta) {
-    const d = this.data, v = this.velocity;
-
-    // Damping (framerate independent)
-    const scaledEasing = Math.pow(1 / d.easing, delta * 60);
-    v[d.adAxis] *= scaledEasing;
-    v[d.wsAxis] *= scaledEasing;
-
-    // Clamp near-zero
-    const CLAMP = 1e-5;
-    if (Math.abs(v[d.adAxis]) < CLAMP) v[d.adAxis] = 0;
-    if (Math.abs(v[d.wsAxis]) < CLAMP) v[d.wsAxis] = 0;
-
-    if (!d.enabled) return;
-
-    // Accumulate from current driver's thumbstick
-    if (this.tsData.x && d.adEnabled) {
-      const s = d.adInverted ? -1 : 1;
-      v[d.adAxis] += s * d.acceleration * this.tsData.x * delta;
-    }
-    if (this.tsData.y && d.wsEnabled) {
-      const s = d.wsInverted ? -1 : 1;
-      v[d.wsAxis] += s * d.acceleration * this.tsData.y * delta;
-    }
-  },
-
-  _getMovementVector: (function () {
-    const dir = new THREE.Vector3();
-    const rot = new THREE.Euler(0, 0, 0, 'YXZ');
-    return function (delta) {
-      const d = this.data, v = this.velocity;
-
-      dir.set(0,0,0);
-      dir[d.adAxis] = v[d.adAxis] * delta;   // left/right
-      dir[d.wsAxis] = -v[d.wsAxis] * delta;  // forward (stick up) is -Z
-
-      const cam = this.el.sceneEl?.camera?.el;
-      const yaw   = cam ? cam.object3D.rotation.y : 0;
-      const pitch = d.fly && cam ? cam.object3D.rotation.x : 0;
-
-      rot.set(pitch, yaw, 0);
-      dir.applyEuler(rot);
-      return dir;
-    };
-  })(),
-
-  // ---------------- selection handlers ----------------
-  _onStick (evt) {
-    if (!this.data.enabled) return;
-    const x = evt.detail?.x || 0, y = evt.detail?.y || 0;
-    // choose on first meaningful nudge
-    if (!this.driver && Math.hypot(x, y) >= this.data.deadzone) {
-      this._chooseDriver(evt.currentTarget);
-    }
-    // If this hand is the driver, store the latest vector
-    if (evt.currentTarget === this.driver) {
-      this.tsData.set(x, y);
-      // prevent other components (like snap-turn) from also handling it
-      evt.stopImmediatePropagation?.();
-      evt.stopPropagation?.();
-      evt.preventDefault?.();
-    }
-  },
-
-  _onTrig (evt) {
-    if (!this.data.enabled) return;
-    if (!this.driver) this._chooseDriver(evt.currentTarget);
-  },
-
-  _chooseDriver (handEl) {
-    this.driver = handEl;
-    // stop blinking & restore all stick materials
-    this._restoreAll();
-    this._blinkTargets.clear();
-  },
-
-  // ---------------- blinking (thumbstick mesh itself) ----------------
-  _tickBlink (time) {
-    // pulse emissive intensity
-    const { intensityMin:min, intensityMax:max, periodMs } = this.data;
-    const t = (time % periodMs) / periodMs;
-    const k = min + (max - min) * 0.5 * (1 + Math.sin(t * Math.PI * 2));
-
-    const color = this.data.blinkColor;
-    this._blinkTargets.forEach(list => {
-      list.forEach(entry => {
-        entry.mats.forEach(({m}) => {
-          if (!m) return;
-          if ('emissive' in m) {
-            m.emissive.set(color);
-            if ('emissiveIntensity' in m) m.emissiveIntensity = k;
-            m.needsUpdate = true;
-          }
-        });
-      });
-    });
-  },
-
-  _prepareBlink (handEl) {
-    const attach = () => {
-      const mesh = handEl.getObject3D('mesh');
-      if (!mesh) return;
-
-      // Gather the thumbstick meshes by name
-      const sticks = [];
-      mesh.traverse(n => {
-        if (!n.isMesh || !n.name) return;
-        const name = n.name.toLowerCase();
-        if (name.includes('thumbstick') || name.includes('joystick') || name.includes('stick')) {
-          sticks.push(n);
+        // If FPS too low, reset velocity.
+        if (delta > 0.2) {
+            velocity[adAxis] = 0;
+            velocity[wsAxis] = 0;
+            return;
         }
-      });
 
-      const entries = [];
-      sticks.forEach(node => {
-        // clone materials to avoid global mutation, and remember originals
-        const arr = Array.isArray(node.material) ? node.material : [node.material];
-        const cloned = arr.map(m => (m && m.clone) ? m.clone() : m);
-        node.material = Array.isArray(node.material) ? cloned : cloned[0];
+        // https://gamedev.stackexchange.com/questions/151383/frame-rate-independant-movement-with-acceleration
+        var scaledEasing = Math.pow(1 / this.easing, delta * 60);
+        // Velocity Easing.
+        if (velocity[adAxis] !== 0) {
+            velocity[adAxis] = velocity[adAxis] * scaledEasing;
+        }
+        if (velocity[wsAxis] !== 0) {
+            velocity[wsAxis] = velocity[wsAxis] * scaledEasing;
+        }
 
-        const mats = (Array.isArray(node.material) ? node.material : [node.material]).map(m => ({
-          m,
-          orig: {
-            hasEm: ('emissive' in m),
-            emissive: ('emissive' in m) ? m.emissive.clone() : null,
-            emissiveIntensity: ('emissiveIntensity' in m) ? m.emissiveIntensity : null,
-            color: m.color ? m.color.clone() : null
-          }
-        }));
-        entries.push({ node, mats });
-      });
+        // Clamp velocity easing.
+        if (Math.abs(velocity[adAxis]) < CLAMP_VELOCITY) { velocity[adAxis] = 0; }
+        if (Math.abs(velocity[wsAxis]) < CLAMP_VELOCITY) { velocity[wsAxis] = 0; }
 
-      this._blinkTargets.set(handEl, entries);
-    };
+        if (!data.enabled) { return; }
 
-    if (handEl.getObject3D('mesh')) attach();
-    else handEl.addEventListener('model-loaded', attach, { once:true });
-  },
+        // Update velocity using keys pressed.
+        acceleration = data.acceleration;
+        if (data.adEnabled && this.tsData.x) {
+            adSign = data.adInverted ? -1 : 1;
+            velocity[adAxis] += adSign * acceleration * this.tsData.x * delta; 
+        }
+        if (data.wsEnabled) {
+            wsSign = data.wsInverted ? -1 : 1;
+            velocity[wsAxis] += wsSign * acceleration * this.tsData.y * delta;
+        }
+    },
+    getMovementVector: (function () {
+        var directionVector = new THREE.Vector3(0, 0, 0);
+        var rotationEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 
-  _restoreAll () {
-    this._blinkTargets.forEach(entries => {
-      entries.forEach(({node, mats}) => {
-        mats.forEach(({m, orig}) => {
-          if (!m) return;
-          if (orig.hasEm && orig.emissive) {
-            m.emissive.copy(orig.emissive);
-            if (orig.emissiveIntensity != null && 'emissiveIntensity' in m) {
-              m.emissiveIntensity = orig.emissiveIntensity;
-            }
-          }
-          if (orig.color && m.color) m.color.copy(orig.color);
-          m.needsUpdate = true;
-        });
-      });
-    });
-  }
+        return function (delta) {
+            var rotation = this.el.sceneEl.camera.el.object3D.rotation
+            var velocity = this.velocity;
+            var xRotation;
+
+            directionVector.copy(velocity);
+            directionVector.multiplyScalar(delta);
+            // Absolute.
+            if (!rotation) { return directionVector; }
+            xRotation = this.data.fly ? rotation.x : 0;
+
+            // Transform direction relative to heading.
+            rotationEuler.set(xRotation, rotation.y, 0);
+            directionVector.applyEuler(rotationEuler);
+            return directionVector;
+        };
+    })(),
+    thumbstickMoved: function (evt) {
+        this.tsData.set(evt.detail.x, evt.detail.y);
+    },
+    remove: function () {
+        this.el.removeEventListener('thumbstickmoved', this.thumbstickMoved);
+    }
 });
-
-
 
 AFRAME.registerComponent('button-colorizer', {
   schema: {
