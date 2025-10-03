@@ -806,22 +806,19 @@ AFRAME.registerComponent('button-colorizer', {
 
     useEmissive:       { default: true },
     emissiveIntensity: { default: 0.9 },
-    overrideBaseColor: { default: true }
+    overrideBaseColor: { default: true },
+    debug:             { default: false }
   },
 
   init() {
-    this._targets = {a:[],b:[],x:[],y:[],grip:[]};
-    this._original = new Map();     // node.uuid -> [original materials]
-    this._pendingScheme = null;
+    this._targets  = {a:[], b:[], x:[], y:[], grip:[]};
+    this._original = new Map();  // node.uuid -> [original materials]
+    this._pending  = null;
 
     this._onModelLoaded = () => {
       this._collectTargets();
-      if (this._pendingScheme) {
-        this.applyScheme(this._pendingScheme);
-        this._pendingScheme = null;
-      }
+      if (this._pending) { this.applyScheme(this._pending); this._pending = null; }
     };
-
     this.el.addEventListener('model-loaded', this._onModelLoaded);
     if (this.el.getObject3D('mesh')) this._onModelLoaded();
   },
@@ -831,13 +828,13 @@ AFRAME.registerComponent('button-colorizer', {
     this.el.removeEventListener('model-loaded', this._onModelLoaded);
   },
 
-  // Public API: colorize specific buttons (call with e.g. {a:'#f00', b:'#00f', grip:'#ff0'})
+  // ---- public API ----
   applyScheme(scheme) {
     const mesh = this.el.getObject3D('mesh');
-    if (!mesh) { this._pendingScheme = scheme; return; }
+    if (!mesh) { this._pending = scheme; return; }
 
-    // First clear any previous tint to avoid stale colors.
-    this._clearOnly();
+    // restore anything previously tinted by us
+    this._restoreTintedOnly();
 
     Object.keys(scheme).forEach(k => {
       const hex = scheme[k];
@@ -846,7 +843,6 @@ AFRAME.registerComponent('button-colorizer', {
     });
   },
 
-  // Public API: restore defaults for entire controller
   clearScheme() {
     const mesh = this.el.getObject3D('mesh');
     if (!mesh || !this._original.size) return;
@@ -860,9 +856,8 @@ AFRAME.registerComponent('button-colorizer', {
     this._original.clear();
   },
 
-  // ---------- internals ----------
-  _clearOnly() {
-    // Restore only nodes we tinted (fast path).
+  // ---- internals ----
+  _restoreTintedOnly() {
     if (!this._original.size) return;
     for (const [uuid, mats] of this._original.entries()) {
       const node = this._findNodeByUUID(uuid);
@@ -882,41 +877,52 @@ AFRAME.registerComponent('button-colorizer', {
   },
 
   _collectTargets() {
-    this._targets = {a:[],b:[],x:[],y:[],grip:[]};
+    this._targets = {a:[], b:[], x:[], y:[], grip:[]};
     const mesh = this.el.getObject3D('mesh');
     if (!mesh) return;
 
-    const matchers = {
-      a:    (s)=>this._btnMatch(s,'a'),
-      b:    (s)=>this._btnMatch(s,'b'),
-      x:    (s)=>this._btnMatch(s,'x'),
-      y:    (s)=>this._btnMatch(s,'y'),
-      grip: (s)=>s.includes('grip') || s.includes('squeeze')
-    };
-
-    mesh.traverse(n=>{
+    const order = ['a','b','x','y','grip']; // first match wins
+    mesh.traverse(n => {
       if (!n.isMesh || !n.name) return;
-      const name = n.name.toLowerCase().replace(/\s+/g,'');
-      Object.keys(matchers).forEach(k=>{
-        if (matchers[k](name)) this._targets[k].push(n);
-      });
+      const name = n.name.toLowerCase().replace(/\s+/g, '');
+
+      let matchedKey = null;
+      for (const key of order) {
+        if (key === 'grip') {
+          if (name.includes('grip') || name.includes('squeeze')) { matchedKey = 'grip'; break; }
+        } else if (this._btnMatch(name, key)) {
+          matchedKey = key; break;
+        }
+      }
+      if (matchedKey) this._targets[matchedKey].push(n);
     });
+
+    if (this.data.debug) {
+      Object.keys(this._targets).forEach(k => {
+        if (this._targets[k].length) {
+          console.log(`[button-colorizer] ${k}:`, this._targets[k].map(n => n.name));
+        }
+      });
+    }
   },
 
   _btnMatch(name, letter) {
-    return (
-      name.includes(`button_${letter}`) ||
-      name.includes(`${letter}_button`) ||
-      name.includes(`button-${letter}`) ||
-      name.includes(`${letter}-button`) ||
-      name.includes(`btn_${letter}`)    ||
-      name.includes(`btn-${letter}`)    ||
-      (name.includes('button') && name.includes(letter))
-    );
+    // explicit patterns
+    const pats = [
+      `button_${letter}`, `${letter}_button`,
+      `button-${letter}`, `${letter}-button`,
+      `btn_${letter}`,    `btn-${letter}`,
+      `button${letter}`,  `${letter}button`
+    ];
+    if (pats.some(p => name.includes(p))) return true;
+
+    // boundary-aware around "button" and the letter
+    const re1 = new RegExp(`(^|[^a-z0-9])button[_-]?${letter}([^a-z0-9]|$)`);
+    const re2 = new RegExp(`(^|[^a-z0-9])${letter}[_-]?button([^a-z0-9]|$)`);
+    return re1.test(name) || re2.test(name);
   },
 
   _tintNode(node, hex) {
-    // Clone material per node so A/B etc. can differ even if they shared one.
     if (!this._original.has(node.uuid)) {
       const mats = Array.isArray(node.material) ? node.material : [node.material];
       this._original.set(node.uuid, mats);
