@@ -117,13 +117,13 @@ AFRAME.registerComponent('painting-area-controller', {
 
 AFRAME.registerComponent('paint-tool-reset', {
   init() {
-    this.leftHand   = document.getElementById('left-hand');
-    this.rightHand  = document.getElementById('right-hand');
-    this.onGrip     = this.onGrip.bind(this);
+    this.leftHand     = document.getElementById('left-hand');
+    this.rightHand    = document.getElementById('right-hand');
+    this.onGrip       = this.onGrip.bind(this);
 
-    // locomotion config used by both hands
-    this.moveAttr   = { rigSelector: '#rig', acceleration: 25, onlyActiveBrushInside: true };
-    this.currentSide = null;
+    // locomotion config
+    this.movementAttr = { rig: '#rig', speed: 0.2 };
+    this.currentSide  = null;
 
     // swap painter on grip
     this.leftHand .addEventListener('gripdown', this.onGrip);
@@ -145,42 +145,42 @@ AFRAME.registerComponent('paint-tool-reset', {
     const painter = (side === 'left') ? this.leftHand : this.rightHand;
     const palette = (side === 'left') ? this.rightHand : this.leftHand;
 
-    // 1) Clean both hands’ tool state (but keep locomotion; we’ll re-apply)
-    [this.leftHand, this.rightHand].forEach(hand => {
-      const dl = hand.components['draw-line'];
-      if (dl) {
-        dl.disableInput?.();
-        if (dl.indicator) {
-          hand.object3D.remove(dl.indicator);
-          dl.indicator.geometry?.dispose?.();
-          dl.indicator.material?.dispose?.();
-        }
+    // 1) CLEAN UP both hands
+    [ this.leftHand, this.rightHand ].forEach(hand => {
+      const dlComp = hand.components['draw-line'];
+      if (dlComp) {
+        dlComp.disableInput();
+        hand.object3D.remove(dlComp.indicator);
+        if (dlComp.indicator?.geometry)  dlComp.indicator.geometry.dispose();
+        if (dlComp.indicator?.material)  dlComp.indicator.material.dispose();
       }
       hand.removeAttribute('draw-line');
       hand.removeAttribute('active-brush');
       hand.removeAttribute('size-picker');
       hand.removeAttribute('color-picker');
-      // Do NOT remove thumbstick-controls; we’ll (re)apply below
+      hand.removeAttribute('thumbstick-controls');
+ 
     });
 
-    // 2) Ensure BOTH hands have locomotion controls
-    this.leftHand .setAttribute('thumbstick-controls', this.moveAttr);
-    this.rightHand.setAttribute('thumbstick-controls', this.moveAttr);
-
-    // 3) Painter gets draw line + active flag
+    // 2) Painter gets locomotion + draw + active flag
+    painter.setAttribute('thumbstick-controls', this.movementAttr);
     painter.setAttribute('draw-line', 'color:#EF2D5E; thickness:0.02; minDist:0.005');
     painter.setAttribute('active-brush','');
 
-    // start disabled until zone allows painting
+  
+
+    // Keep painter's input disabled until zone says it's ok
     const dl = painter.components['draw-line'];
-    if (dl) { dl.disableInput?.(); dl.indicator.visible = false; }
+    if (dl) {
+      dl.disableInput();
+      dl.indicator.visible = false;
+    }
 
-    // if already inside painting area, enable drawing now
-    const pac = this.el.components['painting-area-controller'];
-    if (pac && pac.inside && dl) dl.enableInput?.();
-
-    // 4) Other hand shows the color picker
-    palette.setAttribute('color-picker','');
+    // If we're already inside the painting area, enable immediately
+    const paintCtrl = this.el.components['painting-area-controller'];
+    if (paintCtrl && paintCtrl.inside) {
+      paintCtrl.enablePainting();
+    }
   },
 
   remove() {
@@ -795,7 +795,6 @@ AFRAME.registerComponent('thumbstick-controls', {
         this.el.removeEventListener('thumbstickmoved', this.thumbstickMoved);
     }
 });
-
 
 AFRAME.registerComponent('button-colorizer', {
   schema: {
