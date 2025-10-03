@@ -1,9 +1,6 @@
 // 1) PAINTING-AREA-CONTROLLER (auto-release when outside area)
 AFRAME.registerComponent('painting-area-controller', {
-  schema: {
-    // Use class .paintingArea by default. >
-    areaSelector: { default: '.paintingArea' }
-  },
+  schema: { areaSelector: { default: '.paintingArea' } },
 
   init() {
     this.areas     = Array.from(document.querySelectorAll(this.data.areaSelector));
@@ -11,7 +8,6 @@ AFRAME.registerComponent('painting-area-controller', {
     this.rightHand = document.getElementById('right-hand');
     this.inside    = false;
 
-    // scratch
     this._rigPos = new THREE.Vector3();
     this._box    = new THREE.Box3();
 
@@ -23,25 +19,18 @@ AFRAME.registerComponent('painting-area-controller', {
   tick() {
     if (!this.areas.length) return;
 
-    // Rig world position
     this.el.object3D.getWorldPosition(this._rigPos);
 
-   
     let nowInside = false;
     for (let i = 0; i < this.areas.length; i++) {
       const area = this.areas[i];
       if (!area || !area.object3D) continue;
       this._box.setFromObject(area.object3D);
-      if (this._box.containsPoint(this._rigPos)) {
-        nowInside = true;
-        break;
-      }
+      if (this._box.containsPoint(this._rigPos)) { nowInside = true; break; }
     }
 
-    // While outside, force-stop any active stroke every frame.
     if (!nowInside) this._forceReleaseBothHands();
 
-    // Handle enter/leave once
     if (nowInside === this.inside) return;
     this.inside = nowInside;
     if (nowInside) this.enablePainting();
@@ -62,6 +51,9 @@ AFRAME.registerComponent('painting-area-controller', {
     }
     painter.setAttribute('size-picker','');
     if (palette) palette.setAttribute('color-picker','');
+
+    // --- Apply button colors (only while inside) ---
+    this._applyTints(painter, palette);
   },
 
   disablePainting() {
@@ -69,21 +61,43 @@ AFRAME.registerComponent('painting-area-controller', {
     const palette = (painter === this.leftHand) ? this.rightHand : this.leftHand;
     const dl      = painter && painter.components['draw-line'];
 
-    // End stroke on current painter if any
     if (dl) {
       if (dl.drawing) dl.stopLine();
       dl.disableInput();
       dl.indicator.visible = false;
     }
-
     if (painter) painter.removeAttribute('size-picker');
     if (palette) palette.removeAttribute('color-picker');
 
-    // Extra safety: also stop the other hand (in case of desync)
-    this._forceReleaseBothHands();
+    // Clear button colors on BOTH hands when outside.
+    this._clearTints();
   },
 
-  // --- helper: finish the stroke on BOTH hands immediately ---
+  _applyTints(painter, palette) {
+    // Ensure the component is present (no HTML change needed)
+    [painter, palette].forEach(h => {
+      if (!h) return;
+      if (!h.components['button-colorizer']) h.setAttribute('button-colorizer', '');
+    });
+
+    const isRight = (painter === this.rightHand);
+    const scheme  = isRight
+      ? { a:'#ff0000', b:'#0000ff', grip:'#ffff00' }  // Right = A red, B blue, Grip yellow
+      : { x:'#ff0000', y:'#0000ff', grip:'#ffff00' }; // Left  = X red, Y blue, Grip yellow
+
+    painter.components['button-colorizer'].applyScheme(scheme);
+    if (palette && palette.components['button-colorizer']) {
+      palette.components['button-colorizer'].clearScheme();
+    }
+  },
+
+  _clearTints() {
+    [this.leftHand, this.rightHand].forEach(h => {
+      const bc = h && h.components['button-colorizer'];
+      if (bc) bc.clearScheme();
+    });
+  },
+
   _forceReleaseBothHands() {
     [this.leftHand, this.rightHand].forEach(hand => {
       if (!hand) return;
@@ -98,6 +112,7 @@ AFRAME.registerComponent('painting-area-controller', {
     });
   }
 });
+
 
 
 AFRAME.registerComponent('paint-tool-reset', {
@@ -781,3 +796,143 @@ AFRAME.registerComponent('oculus-thumbstick-controls', {
     }
 });
 
+AFRAME.registerComponent('button-colorizer', {
+  schema: {
+    a:    { type: 'color', default: '' },
+    b:    { type: 'color', default: '' },
+    x:    { type: 'color', default: '' },
+    y:    { type: 'color', default: '' },
+    grip: { type: 'color', default: '' },
+
+    useEmissive:       { default: true },
+    emissiveIntensity: { default: 0.9 },
+    overrideBaseColor: { default: true }
+  },
+
+  init() {
+    this._targets = {a:[],b:[],x:[],y:[],grip:[]};
+    this._original = new Map();     // node.uuid -> [original materials]
+    this._pendingScheme = null;
+
+    this._onModelLoaded = () => {
+      this._collectTargets();
+      if (this._pendingScheme) {
+        this.applyScheme(this._pendingScheme);
+        this._pendingScheme = null;
+      }
+    };
+
+    this.el.addEventListener('model-loaded', this._onModelLoaded);
+    if (this.el.getObject3D('mesh')) this._onModelLoaded();
+  },
+
+  remove() {
+    this.clearScheme();
+    this.el.removeEventListener('model-loaded', this._onModelLoaded);
+  },
+
+  // Public API: colorize specific buttons (call with e.g. {a:'#f00', b:'#00f', grip:'#ff0'})
+  applyScheme(scheme) {
+    const mesh = this.el.getObject3D('mesh');
+    if (!mesh) { this._pendingScheme = scheme; return; }
+
+    // First clear any previous tint to avoid stale colors.
+    this._clearOnly();
+
+    Object.keys(scheme).forEach(k => {
+      const hex = scheme[k];
+      if (!hex) return;
+      (this._targets[k] || []).forEach(node => this._tintNode(node, hex));
+    });
+  },
+
+  // Public API: restore defaults for entire controller
+  clearScheme() {
+    const mesh = this.el.getObject3D('mesh');
+    if (!mesh || !this._original.size) return;
+    mesh.traverse(n => {
+      if (!n.isMesh) return;
+      const orig = this._original.get(n.uuid);
+      if (!orig) return;
+      n.material = Array.isArray(n.material) ? orig : orig[0];
+      n.material.needsUpdate = true;
+    });
+    this._original.clear();
+  },
+
+  // ---------- internals ----------
+  _clearOnly() {
+    // Restore only nodes we tinted (fast path).
+    if (!this._original.size) return;
+    for (const [uuid, mats] of this._original.entries()) {
+      const node = this._findNodeByUUID(uuid);
+      if (!node) continue;
+      node.material = Array.isArray(node.material) ? mats : mats[0];
+      node.material.needsUpdate = true;
+    }
+    this._original.clear();
+  },
+
+  _findNodeByUUID(uuid) {
+    const mesh = this.el.getObject3D('mesh');
+    let out = null;
+    if (!mesh) return null;
+    mesh.traverse(n => { if (!out && n.uuid === uuid) out = n; });
+    return out;
+  },
+
+  _collectTargets() {
+    this._targets = {a:[],b:[],x:[],y:[],grip:[]};
+    const mesh = this.el.getObject3D('mesh');
+    if (!mesh) return;
+
+    const matchers = {
+      a:    (s)=>this._btnMatch(s,'a'),
+      b:    (s)=>this._btnMatch(s,'b'),
+      x:    (s)=>this._btnMatch(s,'x'),
+      y:    (s)=>this._btnMatch(s,'y'),
+      grip: (s)=>s.includes('grip') || s.includes('squeeze')
+    };
+
+    mesh.traverse(n=>{
+      if (!n.isMesh || !n.name) return;
+      const name = n.name.toLowerCase().replace(/\s+/g,'');
+      Object.keys(matchers).forEach(k=>{
+        if (matchers[k](name)) this._targets[k].push(n);
+      });
+    });
+  },
+
+  _btnMatch(name, letter) {
+    return (
+      name.includes(`button_${letter}`) ||
+      name.includes(`${letter}_button`) ||
+      name.includes(`button-${letter}`) ||
+      name.includes(`${letter}-button`) ||
+      name.includes(`btn_${letter}`)    ||
+      name.includes(`btn-${letter}`)    ||
+      (name.includes('button') && name.includes(letter))
+    );
+  },
+
+  _tintNode(node, hex) {
+    // Clone material per node so A/B etc. can differ even if they shared one.
+    if (!this._original.has(node.uuid)) {
+      const mats = Array.isArray(node.material) ? node.material : [node.material];
+      this._original.set(node.uuid, mats);
+      const cloned = mats.map(m => (m && m.clone) ? m.clone() : m);
+      node.material = Array.isArray(node.material) ? cloned : cloned[0];
+    }
+
+    const matsNow = Array.isArray(node.material) ? node.material : [node.material];
+    matsNow.forEach(m => {
+      if (!m) return;
+      if (this.data.overrideBaseColor && m.color) m.color.set(hex);
+      if (this.data.useEmissive && 'emissive' in m) {
+        m.emissive.set(hex);
+        if ('emissiveIntensity' in m) m.emissiveIntensity = this.data.emissiveIntensity;
+      }
+      m.needsUpdate = true;
+    });
+  }
+});
