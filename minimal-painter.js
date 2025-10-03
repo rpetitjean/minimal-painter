@@ -934,6 +934,7 @@ AFRAME.registerComponent('thumbstick-controls', {
 });
 
 
+
 AFRAME.registerComponent('button-colorizer', {
   schema: {
     a:    { type: 'color', default: '' },
