@@ -158,12 +158,12 @@ AFRAME.registerComponent('paint-tool-reset', {
       hand.removeAttribute('active-brush');
       hand.removeAttribute('size-picker');
       hand.removeAttribute('color-picker');
-      hand.removeAttribute('oculus-thumbstick-controls');
+      hand.removeAttribute('thumbstick-controls');
  
     });
 
     // 2) Painter gets locomotion + draw + active flag
-    painter.setAttribute('oculus-thumbstick-controls', this.movementAttr);
+    painter.setAttribute('thumbstick-controls', this.movementAttr);
     painter.setAttribute('draw-line', 'color:#EF2D5E; thickness:0.02; minDist:0.005');
     painter.setAttribute('active-brush','');
 
@@ -225,7 +225,7 @@ AFRAME.registerComponent('hand-swapper', {
           dl.indicator.material?.dispose?.();
         }
       }
-      h.removeAttribute('oculus-thumbstick-controls');
+      h.removeAttribute('thumbstick-controls');
       h.removeAttribute('draw-line');
       h.removeAttribute('size-picker');
       h.removeAttribute('color-picker');
@@ -236,7 +236,7 @@ AFRAME.registerComponent('hand-swapper', {
 
     // 2) decide which is painter vs. palette
     // 3) give painter movement + draw + size + mark it
-    painter.setAttribute('oculus-thumbstick-controls', this.thumbAttr);
+    painter.setAttribute('thumbstick-controls', this.thumbAttr);
     painter.setAttribute('draw-line', 'color:#EF2D5E; thickness:0.02; minDist:0.005');
     painter.setAttribute('size-picker','');
     painter.setAttribute('active-brush','');
@@ -678,7 +678,7 @@ AFRAME.registerComponent('color-picker',{
 });
 
 
-AFRAME.registerComponent('oculus-thumbstick-controls', {
+AFRAME.registerComponent('thumbstick-controls', {
     schema: {
         acceleration: { default: 25 },
         rigSelector: {default: "#rig"},
@@ -805,7 +805,7 @@ AFRAME.registerComponent('button-colorizer', {
     grip: { type: 'color', default: '' },
 
     useEmissive:       { default: true },
-    emissiveIntensity: { default: 0.0 },
+    emissiveIntensity: { default: 1 },
     overrideBaseColor: { default: true },
     debug:             { default: false }
   },
