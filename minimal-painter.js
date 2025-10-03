@@ -115,45 +115,74 @@ AFRAME.registerComponent('painting-area-controller', {
 
 
 
-// Gives BOTH hands locomotion; painter-only restriction is enforced
-// by thumbstick-controls when inside the painting area.
 AFRAME.registerComponent('paint-tool-reset', {
   init() {
-    this.leftHand   = document.getElementById('left-hand');
-    this.rightHand  = document.getElementById('right-hand');
-    this.onGrip     = this.onGrip.bind(this);
-    this.moveAttr   = { rigSelector: '#rig', acceleration: 25, onlyActiveBrushInside: true };
-    this.currentSide = null;
+    this.leftHand     = document.getElementById('left-hand');
+    this.rightHand    = document.getElementById('right-hand');
+    this.onGrip       = this.onGrip.bind(this);
+
+    // locomotion config
+    this.movementAttr = { rig: '#rig', speed: 0.2 };
+    this.currentSide  = null;
+
+    // swap painter on grip
     this.leftHand .addEventListener('gripdown', this.onGrip);
     this.rightHand.addEventListener('gripdown', this.onGrip);
-    this.assignTools('right', true);
+
+    // start on right
+    this.assignTools('right', /* force */ true);
   },
-  onGrip(evt) { this.assignTools(evt.currentTarget.id === 'left-hand' ? 'left' : 'right'); },
-  assignTools(side, force=false) {
+
+  onGrip(evt) {
+    const side = (evt.currentTarget.id === 'left-hand') ? 'left' : 'right';
+    this.assignTools(side);
+  },
+
+  assignTools(side, force = false) {
     if (!force && side === this.currentSide) return;
     this.currentSide = side;
-    const painter = side==='left'? this.leftHand : this.rightHand;
-    const palette = side==='left'? this.rightHand : this.leftHand;
 
-    [this.leftHand, this.rightHand].forEach(h=>{
-      const dl=h.components['draw-line'];
-      if (dl){ dl.disableInput?.(); if (dl.indicator){ h.object3D.remove(dl.indicator); dl.indicator.geometry?.dispose?.(); dl.indicator.material?.dispose?.(); }}
-      h.removeAttribute('draw-line'); h.removeAttribute('active-brush'); h.removeAttribute('size-picker'); h.removeAttribute('color-picker');
+    const painter = (side === 'left') ? this.leftHand : this.rightHand;
+    const palette = (side === 'left') ? this.rightHand : this.leftHand;
+
+    // 1) CLEAN UP both hands
+    [ this.leftHand, this.rightHand ].forEach(hand => {
+      const dlComp = hand.components['draw-line'];
+      if (dlComp) {
+        dlComp.disableInput();
+        hand.object3D.remove(dlComp.indicator);
+        if (dlComp.indicator?.geometry)  dlComp.indicator.geometry.dispose();
+        if (dlComp.indicator?.material)  dlComp.indicator.material.dispose();
+      }
+      hand.removeAttribute('draw-line');
+      hand.removeAttribute('active-brush');
+      hand.removeAttribute('size-picker');
+      hand.removeAttribute('color-picker');
+      hand.removeAttribute('thumbstick-controls');
+ 
     });
 
-    // Both hands can locomote; inside-area gating handled per-hand.
-    this.leftHand .setAttribute('thumbstick-controls', this.moveAttr);
-    this.rightHand.setAttribute('thumbstick-controls', this.moveAttr);
-
-    // Painter tools
-    painter.setAttribute('draw-line','color:#EF2D5E; thickness:0.02; minDist:0.005');
+    // 2) Painter gets locomotion + draw + active flag
+    painter.setAttribute('thumbstick-controls', this.movementAttr);
+    painter.setAttribute('draw-line', 'color:#EF2D5E; thickness:0.02; minDist:0.005');
     painter.setAttribute('active-brush','');
-    const dl = painter.components['draw-line']; if (dl){ dl.disableInput?.(); dl.indicator.visible=false; }
-    const pac = this.el.components['painting-area-controller']; if (pac?.inside && dl) dl.enableInput?.();
 
-    // Palette UI
-    palette.setAttribute('color-picker','');
+  
+
+    // Keep painter's input disabled until zone says it's ok
+    const dl = painter.components['draw-line'];
+    if (dl) {
+      dl.disableInput();
+      dl.indicator.visible = false;
+    }
+
+    // If we're already inside the painting area, enable immediately
+    const paintCtrl = this.el.components['painting-area-controller'];
+    if (paintCtrl && paintCtrl.inside) {
+      paintCtrl.enablePainting();
+    }
   },
+
   remove() {
     this.leftHand .removeEventListener('gripdown', this.onGrip);
     this.rightHand.removeEventListener('gripdown', this.onGrip);
@@ -649,84 +678,123 @@ AFRAME.registerComponent('color-picker',{
 });
 
 
-// Hand-attached locomotion; both hands move when OUTSIDE,
-// only the active-brush hand moves when INSIDE the painting area.
 AFRAME.registerComponent('thumbstick-controls', {
-  schema: {
-    rigSelector: { default: '#rig' },
-    acceleration: { default: 25 },
-    easing:       { default: 1.1 },
-    deadzone:     { default: 0.20 },
-    adAxis: { default: 'x', oneOf: ['x','y','z'] },
-    wsAxis: { default: 'z', oneOf: ['x','y','z'] },
-    fly:    { default: false },
-    enabled:    { default: true },
-    adEnabled:  { default: true },
-    adInverted: { default: false },
-    wsEnabled:  { default: true },
-    wsInverted: { default: false },
-    onlyActiveBrushInside: { default: true }
-  },
-  init () {
-    this.velocity = new THREE.Vector3();
-    this.tsData   = new THREE.Vector2(0,0);
-    this._onStick = this._onStick.bind(this);
-    this.el.addEventListener('thumbstickmoved', this._onStick);
-  },
-  update () {
-    this.rigEl = document.querySelector(this.data.rigSelector) || this.el.sceneEl;
-    this._pac  = this.rigEl?.components?.['painting-area-controller'];
-  },
-  remove () { this.el.removeEventListener('thumbstickmoved', this._onStick); },
-  _isActive () {
-    if (!this.data.enabled) return false;
-    const inside = !!(this._pac && this._pac.inside);
-    if (!inside) return true;
-    if (!this.data.onlyActiveBrushInside) return true;
-    return this.el.hasAttribute('active-brush');
-  },
-  _onStick (evt) {
-    let x = evt.detail?.x || 0, y = evt.detail?.y || 0;
-    if (Math.hypot(x,y) < this.data.deadzone) x = y = 0;
-    if (!this._isActive()) return;
-    if (!this.data.adEnabled) x = 0;
-    if (!this.data.wsEnabled) y = 0;
-    this.tsData.set(x, y);
-    evt.stopImmediatePropagation?.(); evt.stopPropagation?.(); evt.preventDefault?.();
-  },
-  tick (t, dms) {
-    if (!this._isActive() || !this.rigEl || !this.el.sceneEl?.is('vr-mode')) return;
-    const dt = dms/1000; if (dt > 0.2) { this.velocity.set(0,0,0); return; }
-    this._updateVelocity(dt);
-    const d = this.data, v = this.velocity;
-    if (!v[d.adAxis] && !v[d.wsAxis]) return;
-    const move = this._getMovementVector(dt); if (!d.fly) move.y = 0;
-    this.rigEl.object3D.position.add(move);
-  },
-  _updateVelocity (dt) {
-    const d = this.data, v = this.velocity;
-    const k = Math.pow(1 / d.easing, dt * 60);
-    v[d.adAxis] *= k; v[d.wsAxis] *= k;
-    const CL = 1e-5; if (Math.abs(v[d.adAxis]) < CL) v[d.adAxis] = 0; if (Math.abs(v[d.wsAxis]) < CL) v[d.wsAxis] = 0;
-    if (!d.enabled) return;
-    if (this.tsData.x) v[d.adAxis] += (d.adInverted?-1:1) * d.acceleration * this.tsData.x * dt;
-    if (this.tsData.y) v[d.wsAxis] += (d.wsInverted?-1:1) * d.acceleration * this.tsData.y * dt;
-  },
-  _getMovementVector: (function () {
-    const dir = new THREE.Vector3(), rot = new THREE.Euler(0,0,0,'YXZ');
-    return function (dt) {
-      const d = this.data, v = this.velocity;
-      dir.set(0,0,0);
-      dir[d.adAxis] = v[d.adAxis]*dt;
-      dir[d.wsAxis] = -v[d.wsAxis]*dt; // stick up = -Z
-      const cam = this.el.sceneEl?.camera?.el;
-      const yaw = cam ? cam.object3D.rotation.y : 0;
-      const pitch = d.fly && cam ? cam.object3D.rotation.x : 0;
-      rot.set(pitch, yaw, 0); dir.applyEuler(rot); return dir;
-    };
-  })()
-});
+    schema: {
+        acceleration: { default: 25 },
+        rigSelector: {default: "#rig"},
+        fly: { default: false },
+        controllerOriented: { default: false },
+        adAxis: {default: 'x', oneOf: ['x', 'y', 'z']},
+        wsAxis: {default: 'z', oneOf: ['x', 'y', 'z']},
+        enabled: {default: true},
+        adEnabled: {default: true},
+        adInverted: {default: false},
+        wsEnabled: {default: true},
+        wsInverted: {default: false}
+    },
+    init: function () {
+        this.easing = 1.1;
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.tsData = new THREE.Vector2(0, 0);
 
+        this.thumbstickMoved = this.thumbstickMoved.bind(this)
+        this.el.addEventListener('thumbstickmoved', this.thumbstickMoved);
+    },
+    update: function() {
+        this.rigElement = document.querySelector(this.data.rigSelector)
+    },
+    tick: function (time, delta) {
+        if (!this.el.sceneEl.is('vr-mode')) return;
+        var data = this.data;
+        var el = this.rigElement
+        var velocity = this.velocity;
+        //console.log("here", this.tsData, this.tsData.length())
+        if (!velocity[data.adAxis] && !velocity[data.wsAxis] && !this.tsData.length()) { return; }
+
+        // Update velocity.
+        delta = delta / 1000;
+        this.updateVelocity(delta);
+
+        if (!velocity[data.adAxis] && !velocity[data.wsAxis]) { return; }
+
+        // Get movement vector and translate position.
+        el.object3D.position.add(this.getMovementVector(delta));
+    },
+    updateVelocity: function (delta) {
+        var acceleration;
+        var adAxis;
+        var adSign;
+        var data = this.data;
+        var velocity = this.velocity;
+        var wsAxis;
+        var wsSign;
+        const CLAMP_VELOCITY = 0.00001;
+
+        adAxis = data.adAxis;
+        wsAxis = data.wsAxis;
+
+        // If FPS too low, reset velocity.
+        if (delta > 0.2) {
+            velocity[adAxis] = 0;
+            velocity[wsAxis] = 0;
+            return;
+        }
+
+        // https://gamedev.stackexchange.com/questions/151383/frame-rate-independant-movement-with-acceleration
+        var scaledEasing = Math.pow(1 / this.easing, delta * 60);
+        // Velocity Easing.
+        if (velocity[adAxis] !== 0) {
+            velocity[adAxis] = velocity[adAxis] * scaledEasing;
+        }
+        if (velocity[wsAxis] !== 0) {
+            velocity[wsAxis] = velocity[wsAxis] * scaledEasing;
+        }
+
+        // Clamp velocity easing.
+        if (Math.abs(velocity[adAxis]) < CLAMP_VELOCITY) { velocity[adAxis] = 0; }
+        if (Math.abs(velocity[wsAxis]) < CLAMP_VELOCITY) { velocity[wsAxis] = 0; }
+
+        if (!data.enabled) { return; }
+
+        // Update velocity using keys pressed.
+        acceleration = data.acceleration;
+        if (data.adEnabled && this.tsData.x) {
+            adSign = data.adInverted ? -1 : 1;
+            velocity[adAxis] += adSign * acceleration * this.tsData.x * delta; 
+        }
+        if (data.wsEnabled) {
+            wsSign = data.wsInverted ? -1 : 1;
+            velocity[wsAxis] += wsSign * acceleration * this.tsData.y * delta;
+        }
+    },
+    getMovementVector: (function () {
+        var directionVector = new THREE.Vector3(0, 0, 0);
+        var rotationEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+
+        return function (delta) {
+            var rotation = this.el.sceneEl.camera.el.object3D.rotation
+            var velocity = this.velocity;
+            var xRotation;
+
+            directionVector.copy(velocity);
+            directionVector.multiplyScalar(delta);
+            // Absolute.
+            if (!rotation) { return directionVector; }
+            xRotation = this.data.fly ? rotation.x : 0;
+
+            // Transform direction relative to heading.
+            rotationEuler.set(xRotation, rotation.y, 0);
+            directionVector.applyEuler(rotationEuler);
+            return directionVector;
+        };
+    })(),
+    thumbstickMoved: function (evt) {
+        this.tsData.set(evt.detail.x, evt.detail.y);
+    },
+    remove: function () {
+        this.el.removeEventListener('thumbstickmoved', this.thumbstickMoved);
+    }
+});
 
 AFRAME.registerComponent('button-colorizer', {
   schema: {
