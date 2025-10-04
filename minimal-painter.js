@@ -168,7 +168,7 @@ AFRAME.registerComponent('paint-tool-reset', {
     });
 
     // Painter tools
-    painter.setAttribute('draw-line', 'color:#EF2D5E; thickness:0.02; minDist:0.005');
+    painter.setAttribute('draw-line', 'color:#ffffff; thickness:0.02; minDist:0.005');
     painter.setAttribute('active-brush','');
 
     const dl = painter.components['draw-line'];
@@ -386,7 +386,7 @@ AFRAME.registerComponent('size-picker',{
     hintSize:        { default: 0.028 },       // width = height (m)
     hintTint:        { default: '#111' },
     hintOpacity:     { default: 0.9 },
-    imgHint:         { default: 'UI.png' },          // selector or URL (optional)
+    imgHint:         { default: '/UI.png' },          // selector or URL (optional)
     billboardHints:  { default: true },        // face camera
     faceOutward:     { default: true },        // if not billboarding, point normal outward
 
