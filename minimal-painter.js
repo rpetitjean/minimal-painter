@@ -1,6 +1,7 @@
 // 1) PAINTING-AREA-CONTROLLER (auto-release when outside area)
 // 1) PAINTING-AREA-CONTROLLER — gates UI & locomotion, tints paint-hand buttons inside area
 // 1) PAINTING-AREA-CONTROLLER — gates UI & locomotion, tints paint-hand buttons inside area
+// 1) PAINTING-AREA-CONTROLLER — gates UI & locomotion, tints paint-hand buttons inside area
 AFRAME.registerComponent('painting-area-controller', {
   schema: { areaSelector: { default: '.paintingArea' } },
 
@@ -165,6 +166,7 @@ AFRAME.registerComponent('painting-area-controller', {
     });
   }
 });
+
 
 
 AFRAME.registerComponent('paint-tool-reset', {
@@ -834,6 +836,7 @@ AFRAME.registerComponent('thumbstick-controls', {
 
 
 // 2) BUTTON-COLORIZER — tints A/B/X/Y + Grip; restores originals on clear
+// 2) BUTTON-COLORIZER — A/B/X/Y synonyms so left models named with A/B still work
 AFRAME.registerComponent('button-colorizer', {
   schema: {
     a:    { type: 'color', default: '#E94462' },
@@ -874,10 +877,20 @@ AFRAME.registerComponent('button-colorizer', {
     // restore anything previously tinted by us
     this._restoreTintedOnly();
 
-    Object.keys(scheme).forEach(k => {
-      const hex = scheme[k];
+    // A↔X and B↔Y are treated as synonyms when applying colors.
+    const equiv = {
+      a: ['a','x'], x: ['x','a'],
+      b: ['b','y'], y: ['y','b'],
+      grip: ['grip']
+    };
+
+    Object.keys(scheme).forEach(key => {
+      const hex = scheme[key];
       if (!hex) return;
-      (this._targets[k] || []).forEach(node => this._tintNode(node, hex));
+      const keysToApply = equiv[key] || [key];
+      keysToApply.forEach(k => {
+        (this._targets[k] || []).forEach(node => this._tintNode(node, hex));
+      });
     });
   },
 
@@ -920,7 +933,6 @@ AFRAME.registerComponent('button-colorizer', {
     if (!mesh) return;
 
     const order = ['a','b','x','y','grip']; // first match wins
-
     mesh.traverse(n => {
       if (!n.isMesh || !n.name) return;
       const name = n.name.toLowerCase().replace(/\s+/g, '');
@@ -974,7 +986,6 @@ AFRAME.registerComponent('button-colorizer', {
   },
 
   _letterAlone(name, letter) {
-    // boundary-aware single letter: (^|non-alnum) x (non-alnum|$)
     const re = new RegExp(`(^|[^a-z0-9])${letter}([^a-z0-9]|$)`);
     return re.test(name);
   },
@@ -984,12 +995,11 @@ AFRAME.registerComponent('button-colorizer', {
     if (!g) return false;
     if (!g.boundingSphere) g.computeBoundingSphere?.();
     const r = g.boundingSphere ? g.boundingSphere.radius : Infinity;
-    // Buttons are tiny on controller models; be generous but capped.
     return r > 0 && r < 0.05; // ~5 cm in model units
+    // (tweak if your model scale is different)
   },
 
   _tintNode(node, hex) {
-    // store originals & clone before modifying
     if (!this._original.has(node.uuid)) {
       const mats = Array.isArray(node.material) ? node.material : [node.material];
       this._original.set(node.uuid, mats);
