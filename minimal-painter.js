@@ -257,7 +257,7 @@ AFRAME.registerComponent('hand-swapper', {
 // 3) DRAW-LINE
 AFRAME.registerComponent('draw-line', {
   schema: {
-    color:     { type:'color',  default:'#EF2D5E' },
+    color:     { type:'color',  default:'#ffffffff' },
     thickness: { type:'number', default:0.02   },
     minDist:   { type:'number', default:0.005  },
     tipOffset: { type:'number', default:0.05   }
@@ -386,7 +386,7 @@ AFRAME.registerComponent('size-picker',{
     hintSize:        { default: 0.028 },       // width = height (m)
     hintTint:        { default: '#111' },
     hintOpacity:     { default: 0.9 },
-    imgHint:         { default: '' },          // selector or URL (optional)
+    imgHint:         { default: 'UI.png' },          // selector or URL (optional)
     billboardHints:  { default: true },        // face camera
     faceOutward:     { default: true },        // if not billboarding, point normal outward
 
@@ -787,11 +787,11 @@ AFRAME.registerComponent('thumbstick-controls', {
 
 AFRAME.registerComponent('button-colorizer', {
   schema: {
-    a:    { type: 'color', default: '' },
-    b:    { type: 'color', default: '' },
-    x:    { type: 'color', default: '' },
-    y:    { type: 'color', default: '' },
-    grip: { type: 'color', default: '' },
+    a:    { type: 'color', default: '#E94462' },
+    b:    { type: 'color', default: '#80A8FF' },
+    x:    { type: 'color', default: '#E94462' },
+    y:    { type: 'color', default: '#80A8FF' },
+    grip: { type: 'color', default: '#E2EC72' },
 
     useEmissive:       { default: true },
     emissiveIntensity: { default: 1 },
