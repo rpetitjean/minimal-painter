@@ -234,7 +234,7 @@ AFRAME.registerComponent('hand-swapper', {
     });
 
     // Painter setup
-    painter.setAttribute('draw-line', 'color:#EF2D5E; thickness:0.02; minDist:0.005');
+    painter.setAttribute('draw-line', 'color:#ffffff; thickness:0.02; minDist:0.005');
     painter.setAttribute('size-picker','');
     painter.setAttribute('active-brush','');
 
@@ -383,10 +383,10 @@ AFRAME.registerComponent('size-picker',{
     sizes:{ default:[0.0025,0.005,0.01,0.02] },
 
     // One square hint per hand
-    hintSize:        { default: 0.028 },       // width = height (m)
+    hintSize:        { default: 0.055 },       // width = height (m)
     hintTint:        { default: '#111' },
     hintOpacity:     { default: 0.9 },
-    imgHint:         { default: '/UI.png' },          // selector or URL (optional)
+    imgHint:         { default: 'UI.png' },          // selector or URL (optional)
     billboardHints:  { default: true },        // face camera
     faceOutward:     { default: true },        // if not billboarding, point normal outward
 
