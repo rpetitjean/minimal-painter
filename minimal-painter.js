@@ -2,6 +2,7 @@
 // 1) PAINTING-AREA-CONTROLLER — gates UI & locomotion, tints paint-hand buttons inside area
 // 1) PAINTING-AREA-CONTROLLER — gates UI & locomotion, tints paint-hand buttons inside area
 // 1) PAINTING-AREA-CONTROLLER — gates UI & locomotion, tints paint-hand buttons inside area
+// 1) PAINTING-AREA-CONTROLLER — gates UI & locomotion, tints paint-hand buttons inside area
 AFRAME.registerComponent('painting-area-controller', {
   schema: { areaSelector: { default: '.paintingArea' } },
 
@@ -135,8 +136,9 @@ AFRAME.registerComponent('painting-area-controller', {
     const bcPalette = this._ensureColorizer(palette);
     if (!bcPainter) return;
 
-    // Right: A red / B blue / grip yellow. Left: X red / Y blue / grip yellow.
-    const scheme = (painter === this.rightHand)
+    // Right: A red / B blue / Grip yellow. Left: X red / Y blue / Grip yellow.
+    const isRight = (painter === this.rightHand);
+    const scheme = isRight
       ? { a:'#E94462', b:'#80A8FF', grip:'#E2EC72' }
       : { x:'#E94462', y:'#80A8FF', grip:'#E2EC72' };
 
@@ -837,6 +839,7 @@ AFRAME.registerComponent('thumbstick-controls', {
 
 // 2) BUTTON-COLORIZER — tints A/B/X/Y + Grip; restores originals on clear
 // 2) BUTTON-COLORIZER — A/B/X/Y synonyms so left models named with A/B still work
+// 2) BUTTON-COLORIZER — robust: A/B/X/Y synonyms + positional fallback (top vs bottom)
 AFRAME.registerComponent('button-colorizer', {
   schema: {
     a:    { type: 'color', default: '#E94462' },
@@ -862,6 +865,10 @@ AFRAME.registerComponent('button-colorizer', {
     };
     this.el.addEventListener('model-loaded', this._onModelLoaded);
     if (this.el.getObject3D('mesh')) this._onModelLoaded();
+
+    // scratch
+    this._v = new THREE.Vector3();
+    this._inv = new THREE.Matrix4();
   },
 
   remove() {
@@ -877,13 +884,12 @@ AFRAME.registerComponent('button-colorizer', {
     // restore anything previously tinted by us
     this._restoreTintedOnly();
 
-    // A↔X and B↔Y are treated as synonyms when applying colors.
+    // 1) Try by names first (A↔X, B↔Y synonyms)
     const equiv = {
       a: ['a','x'], x: ['x','a'],
       b: ['b','y'], y: ['y','b'],
       grip: ['grip']
     };
-
     Object.keys(scheme).forEach(key => {
       const hex = scheme[key];
       if (!hex) return;
@@ -892,6 +898,50 @@ AFRAME.registerComponent('button-colorizer', {
         (this._targets[k] || []).forEach(node => this._tintNode(node, hex));
       });
     });
+
+    // 2) Positional fallback if the two face buttons collapsed into one bucket
+    // Build pair list from all face buckets we have.
+    const faces = this._uniqueNodes(
+      [].concat(this._targets.a, this._targets.b, this._targets.x, this._targets.y)
+    );
+    if (faces.length >= 2) {
+      // If either pair is missing or one bucket grabbed both, split by local Y.
+      const needLeft  = (scheme.x || scheme.y);
+      const needRight = (scheme.a || scheme.b);
+
+      const missingLeft  = needLeft  && (this._targets.x.length === 0 || this._targets.y.length === 0);
+      const missingRight = needRight && (this._targets.a.length === 0 || this._targets.b.length === 0);
+
+      if (missingLeft || missingRight) {
+        const side = this._getSide(); // 'left'|'right'
+        const sorted = faces
+          .map(n => ({ n, y: this._localY(n) }))
+          .sort((p,q) => q.y - p.y); // top first
+
+        const top    = sorted[0]?.n;
+        const bottom = sorted[1]?.n;
+
+        // Decide top/bottom colors from the scheme we received.
+        // Left:  top = Y, bottom = X.
+        // Right: top = B, bottom = A.
+        const topColor =
+          (side === 'left')  ? (scheme.y || this.data.y) :
+          (side === 'right') ? (scheme.b || this.data.b) : null;
+
+        const botColor =
+          (side === 'left')  ? (scheme.x || this.data.x) :
+          (side === 'right') ? (scheme.a || this.data.a) : null;
+
+        if (top && topColor)     this._tintNode(top, topColor);
+        if (bottom && botColor)  this._tintNode(bottom, botColor);
+      }
+    }
+
+    if (this.data.debug) {
+      console.log('[button-colorizer] scheme applied. Face counts:',
+        'a',this._targets.a.length,'b',this._targets.b.length,
+        'x',this._targets.x.length,'y',this._targets.y.length);
+    }
   },
 
   clearScheme() {
@@ -908,6 +958,30 @@ AFRAME.registerComponent('button-colorizer', {
   },
 
   // ---- internals ----
+  _uniqueNodes(arr) {
+    const seen = new Set();
+    const out = [];
+    arr.forEach(n => { if (n && !seen.has(n.uuid)) { seen.add(n.uuid); out.push(n); } });
+    return out;
+  },
+
+  _localY(node) {
+    // convert node world pos into controller local space, return Y
+    node.getWorldPosition(this._v);
+    this._inv.copy(this.el.object3D.matrixWorld).invert();
+    this._v.applyMatrix4(this._inv);
+    return this._v.y;
+  },
+
+  _getSide() {
+    const mtc = this.el.getAttribute('meta-touch-controls');
+    if (mtc && mtc.hand) return mtc.hand;
+    const id = (this.el.id||'').toLowerCase();
+    if (id.includes('right')) return 'right';
+    if (id.includes('left'))  return 'left';
+    return 'right';
+  },
+
   _restoreTintedOnly() {
     if (!this._original.size) return;
     for (const [uuid, mats] of this._original.entries()) {
@@ -967,17 +1041,15 @@ AFRAME.registerComponent('button-colorizer', {
     ];
     if (pats.some(p => name.includes(p))) return true;
 
-    // 2) "button" + letter anywhere
-    if (name.includes('button') && name.includes(letter)) return true;
-
-    // 3) common extras
+    // 2) common extras
     const extras = [
       `${letter}cap`, `cap_${letter}`, `${letter}-cap`,
       `${letter}face`, `face_${letter}`, `${letter}-face`
     ];
     if (extras.some(p => name.includes(p))) return true;
 
-    // 4) fallback: bare letter (x/y) if it *looks* like a small button mesh
+    // 3) (NO LONGER) using naive "button+letter anywhere" — too noisy.
+    // 4) tiny-geometry heuristic for single-letter meshes (x/y)
     if ((letter === 'x' || letter === 'y') && this._letterAlone(name, letter) && this._seemsButtonLike(node)) {
       return true;
     }
@@ -995,8 +1067,7 @@ AFRAME.registerComponent('button-colorizer', {
     if (!g) return false;
     if (!g.boundingSphere) g.computeBoundingSphere?.();
     const r = g.boundingSphere ? g.boundingSphere.radius : Infinity;
-    return r > 0 && r < 0.05; // ~5 cm in model units
-    // (tweak if your model scale is different)
+    return r > 0 && r < 0.05; // tweak if your model scale differs
   },
 
   _tintNode(node, hex) {
