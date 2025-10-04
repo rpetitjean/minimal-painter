@@ -1,4 +1,5 @@
 // 1) PAINTING-AREA-CONTROLLER (auto-release when outside area)
+// 1) PAINTING-AREA-CONTROLLER — gates UI & locomotion, tints paint-hand buttons inside area
 AFRAME.registerComponent('painting-area-controller', {
   schema: { areaSelector: { default: '.paintingArea' } },
 
@@ -19,8 +20,10 @@ AFRAME.registerComponent('painting-area-controller', {
   tick() {
     if (!this.areas.length) return;
 
+    // rig world position
     this.el.object3D.getWorldPosition(this._rigPos);
 
+    // inside any area?
     let nowInside = false;
     for (let i = 0; i < this.areas.length; i++) {
       const area = this.areas[i];
@@ -29,8 +32,10 @@ AFRAME.registerComponent('painting-area-controller', {
       if (this._box.containsPoint(this._rigPos)) { nowInside = true; break; }
     }
 
+    // while outside, force-stop any active stroke
     if (!nowInside) this._forceReleaseBothHands();
 
+    // enter/leave handling
     if (nowInside === this.inside) return;
     this.inside = nowInside;
 
@@ -61,6 +66,10 @@ AFRAME.registerComponent('painting-area-controller', {
     painter.setAttribute('size-picker','');
     if (palette) palette.setAttribute('color-picker','');
 
+    // Tint painting hand only (palette hand cleared)
+    this._applyTints(painter, palette);
+
+    // Only the painting hand moves while inside
     this._gateLocomotionToPainter(painter);
   },
 
@@ -77,33 +86,70 @@ AFRAME.registerComponent('painting-area-controller', {
     if (painter) painter.removeAttribute('size-picker');
     if (palette) palette.removeAttribute('color-picker');
 
+    // Clear all controller tints outside area
+    this._clearTints();
+
+    // Both hands can move outside
     this._enableLocomotionBoth();
   },
 
-  // --- locomotion helpers ---
+  // ---------- locomotion helpers ----------
   _ensureThumbstick(handEl) {
     if (!handEl) return;
     if (!handEl.components['thumbstick-controls']) {
       handEl.setAttribute('thumbstick-controls', 'rigSelector', '#rig');
     }
   },
+
   _setLocomotionEnabled(handEl, enabled) {
     if (!handEl) return;
     this._ensureThumbstick(handEl);
     handEl.setAttribute('thumbstick-controls', 'enabled', !!enabled);
   },
+
   _gateLocomotionToPainter(painter) {
     if (!painter) { this._enableLocomotionBoth(); return; }
     const isLeft = (painter === this.leftHand);
     this._setLocomotionEnabled(this.leftHand,  isLeft);
     this._setLocomotionEnabled(this.rightHand, !isLeft);
   },
+
   _enableLocomotionBoth() {
     this._setLocomotionEnabled(this.leftHand,  true);
     this._setLocomotionEnabled(this.rightHand, true);
   },
 
-  // --- force stop strokes outside ---
+  // ---------- tint helpers ----------
+  _ensureColorizer(handEl) {
+    if (!handEl) return null;
+    if (!handEl.components['button-colorizer']) {
+      handEl.setAttribute('button-colorizer','');
+    }
+    return handEl.components['button-colorizer'];
+  },
+
+  _applyTints(painter, palette) {
+    const bcPainter = this._ensureColorizer(painter);
+    const bcPalette = this._ensureColorizer(palette);
+    if (!bcPainter) return;
+
+    // Right: A red / B blue / grip yellow. Left: X red / Y blue / grip yellow.
+    const scheme = (painter === this.rightHand)
+      ? { a:'#E94462', b:'#80A8FF', grip:'#E2EC72' }
+      : { x:'#E94462', y:'#80A8FF', grip:'#E2EC72' };
+
+    bcPainter.applyScheme(scheme);
+    if (bcPalette) bcPalette.clearScheme();
+  },
+
+  _clearTints() {
+    [this.leftHand, this.rightHand].forEach(h => {
+      const bc = h && h.components['button-colorizer'];
+      if (bc) bc.clearScheme();
+    });
+  },
+
+  // ---------- safety: stop strokes when outside ----------
   _forceReleaseBothHands() {
     [this.leftHand, this.rightHand].forEach(hand => {
       if (!hand) return;
@@ -785,6 +831,7 @@ AFRAME.registerComponent('thumbstick-controls', {
     }
 });
 
+// 2) BUTTON-COLORIZER — tints A/B/X/Y + Grip; restores originals on clear
 AFRAME.registerComponent('button-colorizer', {
   schema: {
     a:    { type: 'color', default: '#E94462' },
@@ -905,13 +952,17 @@ AFRAME.registerComponent('button-colorizer', {
     ];
     if (pats.some(p => name.includes(p))) return true;
 
-    // boundary-aware around "button" and the letter
+    // loose fallback if both tokens appear
+    if (name.includes('button') && name.includes(letter)) return true;
+
+    // boundary-aware (extra safety)
     const re1 = new RegExp(`(^|[^a-z0-9])button[_-]?${letter}([^a-z0-9]|$)`);
     const re2 = new RegExp(`(^|[^a-z0-9])${letter}[_-]?button([^a-z0-9]|$)`);
     return re1.test(name) || re2.test(name);
   },
 
   _tintNode(node, hex) {
+    // store originals & clone before modifying
     if (!this._original.has(node.uuid)) {
       const mats = Array.isArray(node.material) ? node.material : [node.material];
       this._original.set(node.uuid, mats);
