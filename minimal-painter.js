@@ -500,7 +500,7 @@ AFRAME.registerComponent('size-picker',{
 
   _highlight(){
     this.cells.forEach((ring,i)=> {
-      ring.setAttribute('material', i===this.idx ? 'color:#9E9E9E;side:double' : 'color:#888;side:double');
+      ring.setAttribute('material', i===this.idx ? 'color:#D6D6D6;side:double' : 'color:#888;side:double');
     });
     const t = this.data.sizes[this.idx];
     const brush = document.querySelector('[active-brush]');
@@ -516,8 +516,8 @@ AFRAME.registerComponent('size-picker',{
   _makeSideHint(){
     const s = this.data.hintSize;
     const p = document.createElement('a-plane');
-    p.setAttribute('width',  0.5);
-    p.setAttribute('height', 0.5);
+    p.setAttribute('width',  0.05);
+    p.setAttribute('height', 0.05);
 
     const mat = this.data.imgHint
       ? `src:${this.data.imgHint}; side:double; transparent:true`
@@ -617,7 +617,7 @@ AFRAME.registerComponent('color-picker',{
     bg.setAttribute('radius', this.data.bgRadius);
     bg.setAttribute('segments', 64);
     bg.setAttribute('material', `color:${this.data.bgColor}; opacity:${this.data.bgOpacity}; transparent:true; side:double`);
-    bg.setAttribute('position','0 0 -0.01');
+    bg.setAttribute('position','0 0 -0.005');
     this.container.appendChild(bg);
   },
 
@@ -632,7 +632,7 @@ AFRAME.registerComponent('color-picker',{
         this.cellY.push(y);
         const cell=document.createElement('a-circle');
         cell.setAttribute('radius', r);
-        cell.setAttribute('segments', 16);
+        cell.setAttribute('segments', 32);
         cell.setAttribute('material', `color:${this.colors[idx]}; side:double`);
         cell.setAttribute('position', `${x} ${y} 0`);
         this.container.appendChild(cell);
@@ -641,7 +641,7 @@ AFRAME.registerComponent('color-picker',{
     const ring=document.createElement('a-ring');
     ring.setAttribute('radius-inner', r*0.8);
     ring.setAttribute('radius-outer', r*1.2);
-    ring.setAttribute('material', 'color:#fff; side:double');
+    ring.setAttribute('material', 'color:#D6D6D6; side:double');
     ring.setAttribute('position', '0 0 0.01'); // will be moved in _applyColor
     this.container.appendChild(ring);
     this.ring = ring;
