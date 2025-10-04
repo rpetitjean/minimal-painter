@@ -517,7 +517,7 @@ AFRAME.registerComponent('size-picker',{
 AFRAME.registerComponent('color-picker',{
   schema:{
     colors:{ default:[
-      '#ff0000','#ff4000','#ff8000','#ffbf00',
+      '#ffffffff','#ff4000','#ff8000','#ffbf00',
       '#ffff00','#bfff00','#80ff00','#40ff00',
       '#00ff00','#00ff40','#00ff80','#00ffbf',
       '#00ffff','#00bfff','#0080ff','#0040ff',
@@ -525,7 +525,7 @@ AFRAME.registerComponent('color-picker',{
       '#ff00ff','#ff00bf','#ff0080','#ff0040'
     ]},
     bgRadius:  { default: 0.11 },
-    bgColor:   { default: '#222' },
+    bgColor:   { default: '#ffffffff' },
     bgOpacity: { default: 0.6 },
     faceDown:  { default: true },   // palette faces floor by default
     invertY:   { default: true }    // stick up -> visually up
