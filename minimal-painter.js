@@ -446,7 +446,7 @@ AFRAME.registerComponent('size-picker',{
       const ring=document.createElement('a-ring');
       ring.setAttribute('radius-inner',r*0.8);
       ring.setAttribute('radius-outer',r);
-      ring.setAttribute('material','color:#888;side:double');
+      ring.setAttribute('material','color:#E0E0E0;side:double');
       ring.object3D.position.set((i-(radii.length-1)/2)*gap,0,0);
       this.container.appendChild(ring);
       return ring;
@@ -487,7 +487,7 @@ AFRAME.registerComponent('size-picker',{
   _placeSideHint(){
     if (!this._hint?.object3D) return;
 
-    const sign = (this._handSide === 'right') ? +1 : -1; // +X for right, -X for left
+    const sign = (this._handSide === 'right') ? +2 : -2; // +X for right, -X for left
     const x = sign * this.data.outerOffset;
     const y = this.data.raise;
     const z = this.data.forward;
@@ -517,7 +517,7 @@ AFRAME.registerComponent('size-picker',{
 AFRAME.registerComponent('color-picker',{
   schema:{
     colors:{ default:[
-      '#ffffffff','#ff4000','#ff8000','#ffbf00',
+      '#ffffff','#ff4000','#ff8000','#ffbf00',
       '#ffff00','#bfff00','#80ff00','#40ff00',
       '#00ff00','#00ff40','#00ff80','#00ffbf',
       '#00ffff','#00bfff','#0080ff','#0040ff',
@@ -525,7 +525,7 @@ AFRAME.registerComponent('color-picker',{
       '#ff00ff','#ff00bf','#ff0080','#ff0040'
     ]},
     bgRadius:  { default: 0.11 },
-    bgColor:   { default: '#ffffffff' },
+    bgColor:   { default: '#ffffff' },
     bgOpacity: { default: 0.6 },
     faceDown:  { default: true },   // palette faces floor by default
     invertY:   { default: true }    // stick up -> visually up
