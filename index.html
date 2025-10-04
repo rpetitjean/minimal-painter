@@ -4,7 +4,7 @@
     <meta charset="utf-8">
 
 
-    <title>minimal-painter demo</title>
+    <title>spatial-marker demo</title>
     <meta name="description" content="A demo of the easy-painter component">
     
     <script src="https://aframe.io/releases/1.7.1/aframe.min.js"></script>
@@ -16,10 +16,10 @@
 
   <body>
 
-    <a-scene background="color: #00FF26">
+    <a-scene>
 
           <!-- PC & VR Rig -->
-    <a-entity  id="rig" painting-area-controller paint-tool-reset button-colorizer>
+    <a-entity  id="rig" spatial-marker>
       <a-box id="camera" camera="fov:75; near: 0.1; far: 700" device-detector="xr: true, mobile: false" position="0 1.7 0"   visible="false" ></a-box>
       <a-entity id="left-hand"  meta-touch-controls="hand: left"></a-entity>
       <a-entity id="right-hand" meta-touch-controls="hand: right"></a-entity>

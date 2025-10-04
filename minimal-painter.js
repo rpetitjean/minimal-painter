@@ -1,3 +1,147 @@
+// SPATIAL-MARKER (rig-friendly: reuses existing camera + hands)
+AFRAME.registerComponent('spatial-marker', {
+  schema: {
+    // painting zone
+    areaSelector:   { default: '.paintingArea' },
+    autoArea:       { default: true },
+    areaSize:       { default: '4 4' },
+    areaPosition:   { default: '0 0 -4' },
+    areaRotation:   { default: '-90 0 0' },
+    areaColor:      { default: '#7BC8A4' },
+    areaOpacity:    { default: 0.0 },
+    areaTransparent:{ default: true },
+
+    // defaults
+    startSide:      { default: 'right', oneOf: ['left','right'] },
+
+    // size-picker passthrough
+    sizes:          { default: [0.0025,0.005,0.01,0.02] },
+    hintSize:       { default: 0.028 },
+    imgHint:        { default: 'UI.png' },
+    billboardHints: { default: true },
+
+    // color-picker passthrough
+    colors:         { default: [
+      '#ffffff','#000000','#ff8000','#ffbf00',
+      '#ffff00','#bfff00','#80ff00','#40ff00',
+      '#00ff00','#00ff40','#00ff80','#00ffbf',
+      '#00ffff','#00bfff','#0080ff','#0040ff',
+      '#0000ff','#4000ff','#8000ff','#bf00ff',
+      '#ff00ff','#ff00bf','#ff0080','#ff0040'
+    ]},
+
+    // locomotion rig target
+    rigSelector:    { default: '#rig' }
+  },
+
+  init() {
+    const el = this.el;
+    const d  = this.data;
+
+    // 0) Make sure the rig has an id (yours already does)
+    if (!el.id) el.setAttribute('id', 'rig');
+
+    // 1) Get (don’t create) your hands
+    const left  = document.getElementById('left-hand');
+    const right = document.getElementById('right-hand');
+
+    // If a project accidentally omitted hands, create minimal ones:
+    const ensureHand = (existing, id, hand) => {
+      if (existing) return existing;
+      const h = document.createElement('a-entity');
+      h.setAttribute('id', id);
+      h.setAttribute('meta-touch-controls', `hand: ${hand}`);
+      el.appendChild(h);
+      return h;
+    };
+    const L = ensureHand(left,  'left-hand',  'left');
+    const R = ensureHand(right, 'right-hand', 'right');
+
+    // 2) Ensure thumbstick-controls target the rig (so gating works)
+    [L, R].forEach(h => {
+      if (!h.components['thumbstick-controls']) {
+        h.setAttribute('thumbstick-controls', `rigSelector: ${d.rigSelector}`);
+      } else {
+        h.setAttribute('thumbstick-controls', 'rigSelector', d.rigSelector);
+      }
+    });
+
+    // 3) Create a painting area plane if none exists
+    const areas = Array.from(document.querySelectorAll(d.areaSelector));
+    if (!areas.length && d.autoArea) this._createAreaPlane();
+
+    // 4) Install your painter components on the rig
+    el.setAttribute('painting-area-controller', { areaSelector: d.areaSelector });
+    el.setAttribute('paint-tool-reset', '');
+
+    // 5) Optional: start on given side
+    const ptr = el.components['paint-tool-reset'];
+    if (ptr && typeof ptr.assignTools === 'function') {
+      ptr.assignTools(d.startSide, /*force*/ true);
+    }
+
+    // 6) Pass preferred size/color configs the first time we’re inside the zone
+    const pac = el.components['painting-area-controller'];
+    if (pac) {
+      // small patch: ensure size-picker uses hintSize for plane width/height
+      const SP = AFRAME.components['size-picker']?.Component?.prototype;
+      if (SP && SP._makeSideHint && !SP._makeSideHint.__patchedForHint) {
+        const orig = SP._makeSideHint;
+        SP._makeSideHint = function patchedMakeSideHint(){
+          const s = this.data.hintSize;
+          const p = document.createElement('a-plane');
+          p.setAttribute('width',  s);
+          p.setAttribute('height', s);
+          const mat = this.data.imgHint
+            ? `src:${this.data.imgHint}; side:double; transparent:true`
+            : `color:${this.data.hintTint}; opacity:${this.data.hintOpacity}; transparent:true; side:double`;
+          p.setAttribute('material', mat);
+          this.el.appendChild(p);
+          return p;
+        };
+        SP._makeSideHint.__patchedForHint = true;
+        SP._makeSideHint.__original = orig;
+      }
+
+      const applyOnceInside = () => {
+        if (!pac.inside) return;
+        const brush = document.querySelector('[active-brush]');
+        if (brush) {
+          brush.setAttribute('size-picker', {
+            sizes: d.sizes,
+            hintSize: d.hintSize,
+            imgHint: d.imgHint,
+            billboardHints: d.billboardHints
+          });
+        }
+        [L, R].forEach(h => h.setAttribute('color-picker', { colors: d.colors }));
+        el.removeEventListener('componentchanged', onChanged);
+      };
+
+      const onChanged = (e) => {
+        if (e.detail.name === 'painting-area-controller') applyOnceInside();
+      };
+      el.addEventListener('componentchanged', onChanged);
+    }
+  },
+
+  _createAreaPlane() {
+    const d = this.data;
+    const plane = document.createElement('a-plane');
+    plane.classList.add(d.areaSelector.replace(/^[.#]/,''));
+    plane.setAttribute('position', d.areaPosition);
+    plane.setAttribute('rotation', d.areaRotation);
+
+    const [w,h] = d.areaSize.split(/\s+/).map(parseFloat);
+    plane.setAttribute('width',  isFinite(w)?w:4);
+    plane.setAttribute('height', isFinite(h)?h:4);
+
+    plane.setAttribute('material', `color:${d.areaColor}; opacity:${d.areaOpacity}; transparent:${d.areaTransparent}`);
+    this.el.sceneEl.appendChild(plane);
+  }
+});
+
+
 // 1) PAINTING-AREA-CONTROLLER
 AFRAME.registerComponent('painting-area-controller', {
   schema: { areaSelector: { default: '.paintingArea' } },
@@ -516,8 +660,8 @@ AFRAME.registerComponent('size-picker',{
   _makeSideHint(){
     const s = this.data.hintSize;
     const p = document.createElement('a-plane');
-    p.setAttribute('width',  0.05);
-    p.setAttribute('height', 0.05);
+    p.setAttribute('width',  0.1);
+    p.setAttribute('height', 0.1);
 
     const mat = this.data.imgHint
       ? `src:${this.data.imgHint}; side:double; transparent:true`
@@ -558,11 +702,11 @@ AFRAME.registerComponent('size-picker',{
 });
 
 
-// 5) COLOR-PICKER — start ring at top-left (index 0)
+// 6) COLOR-PICKER — start ring at top-left (index 0)
 AFRAME.registerComponent('color-picker',{
   schema:{
     colors:{ default:[
-      '#ffffff','#ff4000','#ff8000','#ffbf00',
+      '#ffffff','#000000','#ff8000','#ffbf00',
       '#ffff00','#bfff00','#80ff00','#40ff00',
       '#00ff00','#00ff40','#00ff80','#00ffbf',
       '#00ffff','#00bfff','#0080ff','#0040ff',
@@ -711,7 +855,7 @@ AFRAME.registerComponent('color-picker',{
   }
 });
 
-
+// 7) THUMBSTICK-CONTROLS
 AFRAME.registerComponent('thumbstick-controls', {
     schema: {
         acceleration: { default: 25 },
@@ -831,9 +975,7 @@ AFRAME.registerComponent('thumbstick-controls', {
 });
 
 
-// 2) BUTTON-COLORIZER — tints A/B/X/Y + Grip; restores originals on clear
-// 2) BUTTON-COLORIZER — A/B/X/Y synonyms so left models named with A/B still work
-// 2) BUTTON-COLORIZER — robust: A/B/X/Y synonyms + positional fallback (top vs bottom)
+// 8) BUTTON-COLORIZER
 AFRAME.registerComponent('button-colorizer', {
   schema: {
     a:    { type: 'color', default: '#E94462' },
