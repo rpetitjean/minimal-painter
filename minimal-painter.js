@@ -16,13 +16,13 @@ AFRAME.registerComponent('spatial-marker', {
 
     // size-picker passthrough
     sizes:          { default: [0.0025,0.005,0.01,0.02] },
-    hintSize:       { default: 0.028 },
+    hintSize:       { default: 0.05 },
     imgHint:        { default: 'UI.png' },
     billboardHints: { default: true },
 
     // color-picker passthrough
     colors:         { default: [
-      '#ffffff','#000000','#ff8000','#ffbf00',
+      '#997474ff','#505050ff','#ff8000','#ffbf00',
       '#ffff00','#bfff00','#80ff00','#40ff00',
       '#00ff00','#00ff40','#00ff80','#00ffbf',
       '#00ffff','#00bfff','#0080ff','#0040ff',
