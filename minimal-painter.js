@@ -1,8 +1,4 @@
-// 1) PAINTING-AREA-CONTROLLER (auto-release when outside area)
-// 1) PAINTING-AREA-CONTROLLER — gates UI & locomotion, tints paint-hand buttons inside area
-// 1) PAINTING-AREA-CONTROLLER — gates UI & locomotion, tints paint-hand buttons inside area
-// 1) PAINTING-AREA-CONTROLLER — gates UI & locomotion, tints paint-hand buttons inside area
-// 1) PAINTING-AREA-CONTROLLER — gates UI & locomotion, tints paint-hand buttons inside area
+// 1) PAINTING-AREA-CONTROLLER
 AFRAME.registerComponent('painting-area-controller', {
   schema: { areaSelector: { default: '.paintingArea' } },
 
@@ -170,7 +166,7 @@ AFRAME.registerComponent('painting-area-controller', {
 });
 
 
-
+// 2) PAINT-TOOL-RESET
 AFRAME.registerComponent('paint-tool-reset', {
   init() {
     this.leftHand     = document.getElementById('left-hand');
@@ -238,7 +234,7 @@ AFRAME.registerComponent('paint-tool-reset', {
   }
 });
 
-
+// 3) HAND-SWAPPER
 AFRAME.registerComponent('hand-swapper', {
   init() {
     this.leftHand  = document.getElementById('left-hand');
@@ -303,12 +299,10 @@ AFRAME.registerComponent('hand-swapper', {
   }
 });
 
-
-
-// 3) DRAW-LINE
+// 4) DRAW-LINE
 AFRAME.registerComponent('draw-line', {
   schema: {
-    color:     { type:'color',  default:'#ffffffff' },
+    color:     { type:'color',  default:'#ffffff' },
     thickness: { type:'number', default:0.02   },
     minDist:   { type:'number', default:0.005  },
     tipOffset: { type:'number', default:0.05   }
@@ -428,13 +422,13 @@ AFRAME.registerComponent('draw-line', {
   }
 });
 
-// 4) SIZE-PICKER — single side hint per hand (square, no text)
+// 5) SIZE-PICKER
 AFRAME.registerComponent('size-picker',{
   schema:{
     sizes:{ default:[0.0025,0.005,0.01,0.02] },
 
     // One square hint per hand
-    hintSize:        { default: 0.055 },       // width = height (m)
+    hintSize:        { default: 0.028 },       // width = height (m)
     hintTint:        { default: '#111' },
     hintOpacity:     { default: 0.9 },
     imgHint:         { default: 'UI.png' },          // selector or URL (optional)
@@ -506,7 +500,7 @@ AFRAME.registerComponent('size-picker',{
 
   _highlight(){
     this.cells.forEach((ring,i)=> {
-      ring.setAttribute('material', i===this.idx ? 'color:#FFF;side:double' : 'color:#888;side:double');
+      ring.setAttribute('material', i===this.idx ? 'color:#9E9E9E;side:double' : 'color:#888;side:double');
     });
     const t = this.data.sizes[this.idx];
     const brush = document.querySelector('[active-brush]');
@@ -522,8 +516,8 @@ AFRAME.registerComponent('size-picker',{
   _makeSideHint(){
     const s = this.data.hintSize;
     const p = document.createElement('a-plane');
-    p.setAttribute('width',  s);
-    p.setAttribute('height', s);
+    p.setAttribute('width',  0.5);
+    p.setAttribute('height', 0.5);
 
     const mat = this.data.imgHint
       ? `src:${this.data.imgHint}; side:double; transparent:true`
