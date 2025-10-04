@@ -1,5 +1,6 @@
 // 1) PAINTING-AREA-CONTROLLER (auto-release when outside area)
 // 1) PAINTING-AREA-CONTROLLER — gates UI & locomotion, tints paint-hand buttons inside area
+// 1) PAINTING-AREA-CONTROLLER — gates UI & locomotion, tints paint-hand buttons inside area
 AFRAME.registerComponent('painting-area-controller', {
   schema: { areaSelector: { default: '.paintingArea' } },
 
@@ -831,6 +832,7 @@ AFRAME.registerComponent('thumbstick-controls', {
     }
 });
 
+
 // 2) BUTTON-COLORIZER — tints A/B/X/Y + Grip; restores originals on clear
 AFRAME.registerComponent('button-colorizer', {
   schema: {
@@ -918,6 +920,7 @@ AFRAME.registerComponent('button-colorizer', {
     if (!mesh) return;
 
     const order = ['a','b','x','y','grip']; // first match wins
+
     mesh.traverse(n => {
       if (!n.isMesh || !n.name) return;
       const name = n.name.toLowerCase().replace(/\s+/g, '');
@@ -926,7 +929,7 @@ AFRAME.registerComponent('button-colorizer', {
       for (const key of order) {
         if (key === 'grip') {
           if (name.includes('grip') || name.includes('squeeze')) { matchedKey = 'grip'; break; }
-        } else if (this._btnMatch(name, key)) {
+        } else if (this._btnMatch(name, key, n)) {
           matchedKey = key; break;
         }
       }
@@ -942,8 +945,8 @@ AFRAME.registerComponent('button-colorizer', {
     }
   },
 
-  _btnMatch(name, letter) {
-    // explicit patterns
+  _btnMatch(name, letter, node) {
+    // 1) explicit patterns
     const pats = [
       `button_${letter}`, `${letter}_button`,
       `button-${letter}`, `${letter}-button`,
@@ -952,13 +955,37 @@ AFRAME.registerComponent('button-colorizer', {
     ];
     if (pats.some(p => name.includes(p))) return true;
 
-    // loose fallback if both tokens appear
+    // 2) "button" + letter anywhere
     if (name.includes('button') && name.includes(letter)) return true;
 
-    // boundary-aware (extra safety)
-    const re1 = new RegExp(`(^|[^a-z0-9])button[_-]?${letter}([^a-z0-9]|$)`);
-    const re2 = new RegExp(`(^|[^a-z0-9])${letter}[_-]?button([^a-z0-9]|$)`);
-    return re1.test(name) || re2.test(name);
+    // 3) common extras
+    const extras = [
+      `${letter}cap`, `cap_${letter}`, `${letter}-cap`,
+      `${letter}face`, `face_${letter}`, `${letter}-face`
+    ];
+    if (extras.some(p => name.includes(p))) return true;
+
+    // 4) fallback: bare letter (x/y) if it *looks* like a small button mesh
+    if ((letter === 'x' || letter === 'y') && this._letterAlone(name, letter) && this._seemsButtonLike(node)) {
+      return true;
+    }
+
+    return false;
+  },
+
+  _letterAlone(name, letter) {
+    // boundary-aware single letter: (^|non-alnum) x (non-alnum|$)
+    const re = new RegExp(`(^|[^a-z0-9])${letter}([^a-z0-9]|$)`);
+    return re.test(name);
+  },
+
+  _seemsButtonLike(node) {
+    const g = node.geometry;
+    if (!g) return false;
+    if (!g.boundingSphere) g.computeBoundingSphere?.();
+    const r = g.boundingSphere ? g.boundingSphere.radius : Infinity;
+    // Buttons are tiny on controller models; be generous but capped.
+    return r > 0 && r < 0.05; // ~5 cm in model units
   },
 
   _tintNode(node, hex) {
