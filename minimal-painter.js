@@ -1106,7 +1106,7 @@ AFRAME.registerComponent('button-colorizer', {
 
     useEmissive:       { default: true },
     emissiveIntensity: { default: 1 },
-    overrideBaseColor: { default: true },
+    overrideBaseColor: { default: false },
     debug:             { default: false }
   },
 
