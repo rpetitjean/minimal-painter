@@ -106,37 +106,73 @@ AFRAME.registerComponent('spatial-marker', {
     this._configuredOnce = false;
   },
 
-  tick() {
-    if (this._configuredOnce) return;
+tick() {
+  if (this._configuredOnce) return;
 
-    const pac = this.el.components['painting-area-controller'];
-    if (!pac || !pac.inside) return;
+  const pac = this.el.components['painting-area-controller'];
+  if (!pac || !pac.inside) return;
 
-    // We are now inside for the first time: configure the already-attached UIs.
-    const d = this.data;
-    const left  = document.getElementById('left-hand');
-    const right = document.getElementById('right-hand');
+  const d = this.data;
+  const left  = document.getElementById('left-hand');
+  const right = document.getElementById('right-hand');
 
-    const brush   = document.querySelector('[active-brush]');
-    const palette = brush === left ? right : left;
+  const brush   = document.querySelector('[active-brush]');
+  const palette = brush === left ? right : left;
 
-    // Configure size-picker ONLY if the controller attached it to the brush.
-    if (brush?.components['size-picker']) {
-      brush.setAttribute('size-picker', {
-        sizes: d.sizes,
-        hintSize: d.hintSize,
-        imgHint: d.imgHint,
-        billboardHints: d.billboardHints
-      });
-    }
+  let configuredSomething = false;
 
-    // Configure color-picker ONLY if controller attached it to the palette.
-    if (palette?.components['color-picker']) {
-      palette.setAttribute('color-picker', { colors: d.colors });
-    }
+  // --- size-picker (only if already attached by controller) ---
+  if (brush?.components['size-picker']) {
+    brush.setAttribute('size-picker', {
+      sizes: d.sizes,
+      hintSize: d.hintSize,
+      imgHint: d.imgHint,
+      billboardHints: d.billboardHints
+    });
+    configuredSomething = true;
+  }
 
-    this._configuredOnce = true;
-  },
+  // --- color-picker (only if already attached by controller) ---
+  if (palette?.components['color-picker']) {
+    const colors = this._parseColors(d.colors);
+    // Prefer passing as array object (works when schema type is array).
+    // If your color-picker expects string, uncomment the string form:
+    // palette.setAttribute('color-picker', `colors: ${colors.join(',')}`);
+    palette.setAttribute('color-picker', { colors });
+    configuredSomething = true;
+  }
+
+  if (configuredSomething) this._configuredOnce = true;
+},
+
+// Helpers: robustly parse colors whether array or a single string
+_parseColors(input) {
+  if (Array.isArray(input)) return input.map(c => this._normHex(c)).filter(Boolean);
+  if (typeof input === 'string') {
+    return input
+      .split(/,|\s+/)                    // split by comma OR whitespace
+      .map(s => s.replace(/^['"]|['"]$/g, '')) // strip wrapping quotes
+      .map(c => this._normHex(c))
+      .filter(Boolean);
+  }
+  return [];
+},
+
+_normHex(x) {
+  if (!x) return null;
+  let s = (''+x).trim();
+  if (!s) return null;
+  // Accept #RGB or #RRGGBB (no alpha). Expand #RGB to #RRGGBB.
+  const m3 = /^#([0-9a-fA-F]{3})$/.exec(s);
+  if (m3) {
+    const [r,g,b] = m3[1].split('');
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  const m6 = /^#([0-9a-fA-F]{6})$/.exec(s);
+  if (m6) return `#${m6[1].toLowerCase()}`;
+  return null; // drop invalids like #00ff55ff (has alpha)
+},
+
 
   // ---- helpers ----
   _ensureHand(id, side, allowCreate) {
