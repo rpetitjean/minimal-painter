@@ -781,6 +781,7 @@ AFRAME.registerComponent('size-picker',{
 
 
 // 6) COLOR-PICKER — start ring at top-left (index 0)
+// 6) COLOR-PICKER — start ring at top-left (index 0) + REACT TO COLORS CHANGES
 AFRAME.registerComponent('color-picker',{
   schema:{
     colors:{ default:[
@@ -834,6 +835,39 @@ AFRAME.registerComponent('color-picker',{
     this.el.addEventListener('thumbstickmoved', this.onThumb);
   },
 
+  // NEW: react when colors change (e.g., set via spatial-marker)
+  update(old){
+    if (!old || !('colors' in old)) return;
+    if (!this._arraysDiffer(old.colors, this.data.colors)) return;
+
+    // Update internal colors array, clamp selection
+    this.colors = this.data.colors.slice(0, this.rowSizes.reduce((a,b)=>a+b,0));
+    this.selected = Math.min(this.selected, this.colors.length ? this.colors.length-1 : 0);
+
+    // Rebuild the palette UI
+    if (this.container) this.container.remove();
+    this.cellX = []; this.cellY = []; this.ring = null;
+
+    this.container=document.createElement('a-entity');
+    this.container.setAttribute('position','0 -0.05 -0.16');
+    this.container.setAttribute('rotation', this.data.faceDown ? '-90 0 0' : '90 0 0');
+    this.el.appendChild(this.container);
+
+    this._addPaletteBackground();
+    this._buildPalette();
+    this._applyColor(true);
+  },
+
+  remove(){
+    this.el.removeEventListener('thumbstickmoved', this.onThumb);
+    this.container?.remove();
+  },
+
+  tick(){
+    // (unchanged) — you can keep your billboard logic in size-picker; color-picker doesn’t need it
+  },
+
+  // ---------- palette building ----------
   _addPaletteBackground(){
     const bg=document.createElement('a-circle');
     bg.setAttribute('radius', this.data.bgRadius);
@@ -853,9 +887,10 @@ AFRAME.registerComponent('color-picker',{
         this.cellX.push(x);
         this.cellY.push(y);
         const cell=document.createElement('a-circle');
+        const colStr = this.colors[idx] ?? '#888888';
         cell.setAttribute('radius', r);
         cell.setAttribute('segments', 32);
-        cell.setAttribute('material', `color:${this.colors[idx]}; side:double`);
+        cell.setAttribute('material', `color:${colStr}; side:double`);
         cell.setAttribute('position', `${x} ${y} 0`);
         this.container.appendChild(cell);
       }
@@ -924,14 +959,21 @@ AFRAME.registerComponent('color-picker',{
 
     // Also set brush color to the selected swatch
     const brush=document.querySelector('[active-brush]');
-    if (brush) brush.setAttribute('draw-line','color', this.colors[this.selected]);
+    const color = this.colors[this.selected] ?? '#ffffff';
+    if (brush) brush.setAttribute('draw-line','color', color);
   },
 
-  remove(){
-    this.el.removeEventListener('thumbstickmoved', this.onThumb);
-    this.container.remove();
+  // --- helpers ---
+  _arraysDiffer(a,b){
+    if (!Array.isArray(a) || !Array.isArray(b)) return true;
+    if (a.length !== b.length) return true;
+    for (let i=0;i<a.length;i++){
+      if ((a[i]||'').trim() !== (b[i]||'').trim()) return true;
+    }
+    return false;
   }
 });
+
 
 // 7) THUMBSTICK-CONTROLS
 AFRAME.registerComponent('thumbstick-controls', {
