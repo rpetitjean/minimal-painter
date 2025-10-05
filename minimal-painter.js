@@ -816,8 +816,8 @@ AFRAME.registerComponent('size-picker',{
 
 
 
-// 6) COLOR-PICKER — start ring at top-left (index 0)
-// 6) COLOR-PICKER — start ring at top-left (index 0) + REACT TO COLORS CHANGES
+
+// 6) COLOR-PICKER — rebuilds on colors change + robust parsing
 AFRAME.registerComponent('color-picker',{
   schema:{
     colors:{ default:[
@@ -836,52 +836,58 @@ AFRAME.registerComponent('color-picker',{
   },
 
   init(){
-    // layout
+    // Layout definition (unchanged)
     this.rowSizes=[2,4,6,6,4,2];
     this.rowStart=[0];
     this.rowSizes.forEach((sz,i)=>{ if(i>0) this.rowStart.push(this.rowStart[i-1]+this.rowSizes[i-1]); });
+    this._capacity = this.rowSizes.reduce((a,b)=>a+b,0);
 
-    // state
-    this.colors   = this.data.colors.slice(0, this.rowSizes.reduce((a,b)=>a+b,0));
-    this.selected = 0;                 // <- always start at top-left
+    // State
+    this.colors   = this._parseColors(this.data.colors).slice(0, this._capacity);
+    if (this.colors.length === 0) this.colors = ['#ffffff']; // safety
+    this.selected = 0;   // top-left
     this.canStep  = true;
     this.pressTh  = 0.5;
     this.releaseTh= 0.5;
     this.cellX=[]; this.cellY=[];
     this.ring = null;
 
-    // container
+    // Build container
     this.container=document.createElement('a-entity');
     this.container.setAttribute('position','0 -0.05 -0.16');
     this.container.setAttribute('rotation', this.data.faceDown ? '-90 0 0' : '90 0 0');
     this.el.appendChild(this.container);
 
-    // build
+    // Build UI
     this._addPaletteBackground();
     this._buildPalette();
 
-    // place ring over top-left AFTER elements exist
+    // Place ring over current selection after DOM is ready
     const place = () => this._applyColor(true);
     if (this.container.hasLoaded) place(); else this.container.addEventListener('loaded', place);
     if (this.ring) { if (this.ring.hasLoaded) place(); else this.ring.addEventListener('loaded', place); }
     requestAnimationFrame(place);
 
-    // input
+    // Input
     this.onThumb=this.onThumb.bind(this);
     this.el.addEventListener('thumbstickmoved', this.onThumb);
   },
 
-  // NEW: react when colors change (e.g., set via spatial-marker)
+  // React to runtime changes (e.g., from spatial-marker)
   update(old){
     if (!old || !('colors' in old)) return;
-    if (!this._arraysDiffer(old.colors, this.data.colors)) return;
 
-    // Update internal colors array, clamp selection
-    this.colors = this.data.colors.slice(0, this.rowSizes.reduce((a,b)=>a+b,0));
-    this.selected = Math.min(this.selected, this.colors.length ? this.colors.length-1 : 0);
+    const prev = this._parseColors(old.colors).slice(0, this._capacity);
+    const next = this._parseColors(this.data.colors).slice(0, this._capacity);
+    if (this._arraysEqual(prev, next)) return;
 
-    // Rebuild the palette UI
-    if (this.container) this.container.remove();
+    this.colors = next.length ? next : ['#ffffff'];
+
+    // Preserve selection if possible
+    this.selected = Math.min(this.selected, this.colors.length - 1);
+
+    // Rebuild UI cleanly
+    this.container?.remove();
     this.cellX = []; this.cellY = []; this.ring = null;
 
     this.container=document.createElement('a-entity');
@@ -897,10 +903,6 @@ AFRAME.registerComponent('color-picker',{
   remove(){
     this.el.removeEventListener('thumbstickmoved', this.onThumb);
     this.container?.remove();
-  },
-
-  tick(){
-    // (unchanged) — you can keep your billboard logic in size-picker; color-picker doesn’t need it
   },
 
   // ---------- palette building ----------
@@ -940,6 +942,7 @@ AFRAME.registerComponent('color-picker',{
     this.ring = ring;
   },
 
+  // ---------- input/navigation ----------
   onThumb(evt){
     const x = evt.detail.x;
     const y = this.data.invertY ? -evt.detail.y : evt.detail.y;
@@ -993,20 +996,51 @@ AFRAME.registerComponent('color-picker',{
     this.ring.setAttribute('position', `${x} ${y} 0.01`);
     if (this.ring.object3D) this.ring.object3D.position.set(x, y, 0.01);
 
-    // Also set brush color to the selected swatch
+    // Set brush color to selected swatch
     const brush=document.querySelector('[active-brush]');
     const color = this.colors[this.selected] ?? '#ffffff';
     if (brush) brush.setAttribute('draw-line','color', color);
   },
 
-  // --- helpers ---
-  _arraysDiffer(a,b){
-    if (!Array.isArray(a) || !Array.isArray(b)) return true;
-    if (a.length !== b.length) return true;
+  // ---------- helpers ----------
+  _arraysEqual(a,b){
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
     for (let i=0;i<a.length;i++){
-      if ((a[i]||'').trim() !== (b[i]||'').trim()) return true;
+      if ((a[i]||'').trim() !== (b[i]||'').trim()) return false;
     }
-    return false;
+    return true;
+  },
+
+  _parseColors(input){
+    // Accept: array OR string (commas/spaces/newlines; optional quotes; #RGB or #RRGGBB)
+    if (Array.isArray(input)) {
+      return input.map(c=>this._normHex(c)).filter(Boolean);
+    }
+    if (typeof input === 'string') {
+      return input
+        .split(/,|\s+/)                       // commas OR whitespace
+        .map(s => s.replace(/^['"]|['"]$/g,'')) // strip single/double quotes
+        .map(c=>this._normHex(c))
+        .filter(Boolean);
+    }
+    return [];
+  },
+
+  _normHex(x){
+    if (!x) return null;
+    let s = (''+x).trim();
+    if (!s.startsWith('#')) return null;
+    // #RGB => #RRGGBB
+    const m3 = /^#([0-9a-fA-F]{3})$/.exec(s);
+    if (m3){
+      const [r,g,b] = m3[1].split('');
+      return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+    }
+    // #RRGGBB
+    const m6 = /^#([0-9a-fA-F]{6})$/.exec(s);
+    if (m6) return `#${m6[1].toLowerCase()}`;
+    return null; // reject invalids (e.g., 8-digit with alpha)
   }
 });
 
