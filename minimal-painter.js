@@ -1,78 +1,36 @@
-// SPATIAL-MARKER (rig-friendly: reuses existing camera + hands)
 /**
- * SPATIAL-MARKER
+ * SPATIAL-MARKER (no-UI-on-awake version)
  * One-liner setup for your VR painter rig.
  *
- * Usage:
- *   <a-entity id="rig"
- *     spatial-marker="
- *       areaSelector: .paintingArea;
- *       autoArea: true;
- *       areaSize: 4 4;
- *       areaPosition: 0 0 -4;
- *       areaRotation: -90 0 0;
- *       areaColor: #7BC8A4;
- *       areaOpacity: 0.0;
- *       areaTransparent: true;
- *       startSide: right;
- *       useHandSwapper: false;
- *       patchHintSize: true;
- *       sizes: 0.0025,0.005,0.01,0.02;
- *       hintSize: 0.028;
- *       imgHint: UI.png;
- *       billboardHints: true;
- *       colors:
- *         #ffffff,#000000,#ff8000,#ffbf00,#ffff00,#bfff00,#80ff00,#40ff00,
- *         #00ff00,#00ff40,#00ff80,#00ffbf,#00ffff,#00bfff,#0080ff,#0040ff,
- *         #0000ff,#4000ff,#8000ff,#bf00ff,#ff00ff,#ff00bf,#ff0080,#ff0040;
- *       rigSelector: #rig;
- *       createHandsIfMissing: true;
- *     ">
- *     <!-- camera + hands as you already have them -->
- *   </a-entity>
+ * Usage (keep your current rig/children):
+ * <a-entity id="rig" spatial-marker></a-entity>
  */
 
 AFRAME.registerComponent('spatial-marker', {
   schema: {
     // --- Painting zone selection/creation ---
-    /** CSS selector for paintable area(s). */
-    areaSelector:   { default: '.paintingArea' },
-    /** If true and no areaSelector found, auto-create a plane. */
-    autoArea:       { default: true },
-    /** Auto-created plane size "width height" (m). */
-    areaSize:       { default: '4 4' },
-    /** Auto-created plane position "x y z". */
-    areaPosition:   { default: '0 0 -4' },
-    /** Auto-created plane rotation "x y z". */
-    areaRotation:   { default: '-90 0 0' },
-    /** Auto-created plane color (if visible). */
-    areaColor:      { default: '#ffffffff' },
-    /** Auto-created plane material opacity. */
-    areaOpacity:    { default: 0.0 },
-    /** Auto-created plane material transparent flag. */
-    areaTransparent:{ default: true },
+    areaSelector:    { default: '.paintingArea' },
+    autoArea:        { default: true },
+    areaSize:        { default: '4 4' },           // "width height"
+    areaPosition:    { default: '0 0 -4' },        // "x y z"
+    areaRotation:    { default: '-90 0 0' },       // "x y z"
+    areaColor:       { default: '#7BC8A4' },
+    areaOpacity:     { default: 0.0 },
+    areaTransparent: { default: true },
 
     // --- Behavior toggles ---
-    /** Which hand starts as the painter. */
-    startSide:      { default: 'right', oneOf: ['left','right'] },
-    /** Use hand-swapper instead of paint-tool-reset (both swap on grip). */
-    useHandSwapper: { default: true },
-    /** Patch size-picker so hint plane honors hintSize (width/height = hintSize). */
-    patchHintSize:  { default: true },
+    startSide:       { default: 'right', oneOf: ['left','right'] },
+    useHandSwapper:  { default: false },           // if true, expects hand-swapper NOT to attach size-picker on activate
+    patchHintSize:   { default: true },            // patch size-picker hint plane to use hintSize
 
-    // --- Size-picker passthrough ---
-    /** Brush thickness presets cycled by B/Y. */
-    sizes:          { default: [0.0025,0.005,0.01,0.02] },
-    /** Square hint plane size (meters). */
-    hintSize:       { default: 0.028 },
-    /** Image for hint (URL or selector). Leave empty to use tinted quad. */
-    imgHint:        { default: 'UI.png' },
-    /** Make the hint face the camera each frame. */
-    billboardHints: { default: true },
+    // --- Size-picker passthrough (applied only once inside) ---
+    sizes:           { default: [0.0025,0.005,0.01,0.02] },
+    hintSize:        { default: 0.028 },
+    imgHint:         { default: 'UI.png' },
+    billboardHints:  { default: true },
 
-    // --- Color-picker passthrough ---
-    /** Palette colors (top-left is index 0). */
-    colors:         { default: [
+    // --- Color-picker passthrough (applied only once inside) ---
+    colors:          { default: [
       '#ffffff','#000000','#ff8000','#ffbf00',
       '#ffff00','#bfff00','#80ff00','#40ff00',
       '#00ff00','#00ff40','#00ff80','#00ffbf',
@@ -82,11 +40,9 @@ AFRAME.registerComponent('spatial-marker', {
     ]},
 
     // --- Locomotion / rig targeting ---
-    /** Which entity the thumbstick-controls should move. */
-    rigSelector:    { default: '#rig' },
+    rigSelector:     { default: '#rig' },
 
-    // --- Safety/ergonomics ---
-    /** If the left/right hand entities are missing, create minimal ones. */
+    // --- Safety ---
     createHandsIfMissing: { default: true }
   },
 
@@ -94,14 +50,13 @@ AFRAME.registerComponent('spatial-marker', {
     const el = this.el;
     const d  = this.data;
 
-    // Ensure the rig has an id (required by thumbstick-controls gating).
     if (!el.id) el.setAttribute('id', 'rig');
 
-    // Get (or optionally create) hands in-place under this rig.
+    // Ensure hands (reuse existing; optionally create if missing).
     const L = this._ensureHand('left-hand',  'left',  d.createHandsIfMissing);
     const R = this._ensureHand('right-hand', 'right', d.createHandsIfMissing);
 
-    // Make sure thumbstick-controls target the rig.
+    // Ensure locomotion targets the rig.
     [L, R].forEach(h => {
       if (!h) return;
       if (!h.components['thumbstick-controls']) {
@@ -111,63 +66,75 @@ AFRAME.registerComponent('spatial-marker', {
       }
     });
 
-    // Create a painting area if none exists and autoArea is enabled.
-    const areas = Array.from(document.querySelectorAll(d.areaSelector));
-    if (!areas.length && d.autoArea) this._createAreaPlane();
+    // Auto-create area if requested and none found.
+    if (!document.querySelector(d.areaSelector) && d.autoArea) {
+      this._createAreaPlane();
+    }
 
-    // Install core behaviors: area controller + side swapper.
+    // Mount core behaviors.
     el.setAttribute('painting-area-controller', { areaSelector: d.areaSelector });
-
     if (d.useHandSwapper) {
       el.setAttribute('hand-swapper', '');
     } else {
       el.setAttribute('paint-tool-reset', '');
     }
 
-    // Set start side now (forces painter/palette assignment).
-    const chooser = d.useHandSwapper
-      ? el.components['hand-swapper']
-      : el.components['paint-tool-reset'];
-
+    // Start side selection.
+    const chooser = d.useHandSwapper ? el.components['hand-swapper']
+                                     : el.components['paint-tool-reset'];
     if (chooser) {
-      const fn = d.useHandSwapper ? 'activate' : 'assignTools';
-      if (typeof chooser[fn] === 'function') {
-        // paint-tool-reset.assignTools(side, force) | hand-swapper.activate(side)
-        d.useHandSwapper ? chooser.activate(d.startSide)
-                         : chooser.assignTools(d.startSide, /*force*/ true);
+      if (d.useHandSwapper && typeof chooser.activate === 'function') {
+        chooser.activate(d.startSide);
+      } else if (!d.useHandSwapper && typeof chooser.assignTools === 'function') {
+        chooser.assignTools(d.startSide, /*force*/ true);
       }
     }
 
-    // Optionally patch size-picker's hint maker so width/height = hintSize.
+    // (Important) Do NOT attach size-picker / color-picker here.
+    // If for any reason they are present already, strip them until inside:
+    [L, R].forEach(h => {
+      if (!h) return;
+      if (h.hasAttribute('size-picker'))   h.removeAttribute('size-picker');
+      if (h.hasAttribute('color-picker'))  h.removeAttribute('color-picker');
+    });
+
+    // Patch size-picker hint plane sizing once.
     if (d.patchHintSize) this._patchHintSizeOnce();
 
-    // When we first enter the paint zone, push size/color configs to active tools.
-    const pac = el.components['painting-area-controller'];
-    if (pac) {
-      const onChanged = (e) => {
-        if (e.detail.name !== 'painting-area-controller') return;
-        if (!pac.inside) return;
+    // We'll configure UI once we first detect "inside".
+    this._configuredOnce = false;
+  },
 
-        // Apply size-picker config to the active brush hand.
-        const brush = document.querySelector('[active-brush]');
-        if (brush) {
-          brush.setAttribute('size-picker', {
-            sizes: d.sizes,
-            hintSize: d.hintSize,
-            imgHint: d.imgHint,
-            billboardHints: d.billboardHints
-          });
-        }
+  tick() {
+    if (this._configuredOnce) return;
 
-        // Ensure color-picker palette schema is set on both hands
-        // (controller will attach/detach palette hand UI as needed).
-        [L, R].forEach(h => h && h.setAttribute('color-picker', { colors: d.colors }));
+    const pac = this.el.components['painting-area-controller'];
+    if (!pac || !pac.inside) return;
 
-        // Only need to configure once.
-        el.removeEventListener('componentchanged', onChanged);
-      };
-      el.addEventListener('componentchanged', onChanged);
+    // We are now inside for the first time: configure the already-attached UIs.
+    const d = this.data;
+    const left  = document.getElementById('left-hand');
+    const right = document.getElementById('right-hand');
+
+    const brush   = document.querySelector('[active-brush]');
+    const palette = brush === left ? right : left;
+
+    // Configure size-picker ONLY if the controller attached it to the brush.
+    if (brush?.components['size-picker']) {
+      brush.setAttribute('size-picker', {
+        sizes: d.sizes,
+        hintSize: d.hintSize,
+        imgHint: d.imgHint,
+        billboardHints: d.billboardHints
+      });
     }
+
+    // Configure color-picker ONLY if controller attached it to the palette.
+    if (palette?.components['color-picker']) {
+      palette.setAttribute('color-picker', { colors: d.colors });
+    }
+
+    this._configuredOnce = true;
   },
 
   // ---- helpers ----
@@ -192,26 +159,23 @@ AFRAME.registerComponent('spatial-marker', {
     plane.setAttribute('position', d.areaPosition);
     plane.setAttribute('rotation', d.areaRotation);
 
-    const [w,h] = d.areaSize.split(/\s+/).map(parseFloat);
+    const [w, h] = d.areaSize.split(/\s+/).map(parseFloat);
     plane.setAttribute('width',  Number.isFinite(w) ? w : 4);
     plane.setAttribute('height', Number.isFinite(h) ? h : 4);
 
     plane.setAttribute('material',
       `color:${d.areaColor}; opacity:${d.areaOpacity}; transparent:${d.areaTransparent}`);
 
-    // add to the scene so the controller can find it by selector
     this.el.sceneEl.appendChild(plane);
   },
 
   _patchHintSizeOnce() {
-    const C = AFRAME.components['size-picker']?.Component?.prototype;
-    if (!C) return;
-    if (C._spatialMarkerPatched) return;
+    const P = AFRAME.components['size-picker']?.Component?.prototype;
+    if (!P || P._spatialMarkerPatched) return;
+    const orig = P._makeSideHint;
+    if (typeof orig !== 'function') return;
 
-    const make = C._makeSideHint;
-    if (typeof make !== 'function') return;
-
-    C._makeSideHint = function spatialMarker_makeSideHintPatched() {
+    P._makeSideHint = function patchedMakeSideHint() {
       const s = this.data.hintSize;
       const p = document.createElement('a-plane');
       p.setAttribute('width',  s);
@@ -225,7 +189,7 @@ AFRAME.registerComponent('spatial-marker', {
       this.el.appendChild(p);
       return p;
     };
-    C._spatialMarkerPatched = true;
+    P._spatialMarkerPatched = true;
   }
 });
 
@@ -748,8 +712,8 @@ AFRAME.registerComponent('size-picker',{
   _makeSideHint(){
     const s = this.data.hintSize;
     const p = document.createElement('a-plane');
-    p.setAttribute('width',  0.3);
-    p.setAttribute('height', 0.3);
+    p.setAttribute('width',  0.2);
+    p.setAttribute('height', 0.2);
 
     const mat = this.data.imgHint
       ? `src:${this.data.imgHint}; side:double; transparent:true`
