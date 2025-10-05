@@ -1102,7 +1102,7 @@ AFRAME.registerComponent('button-colorizer', {
     b:    { type: 'color', default: '#80A8FF' },
     x:    { type: 'color', default: '#E94462' },
     y:    { type: 'color', default: '#80A8FF' },
-    grip: { type: 'color', default: '#eaff00' },
+    grip: { type: 'color', default: '#b6c600' },
 
     useEmissive:       { default: true },
     emissiveIntensity: { default: 1 },
