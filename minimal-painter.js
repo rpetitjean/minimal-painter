@@ -7,7 +7,7 @@
  * <a-entity id="rig" spatial-marker></a-entity>
  */
 
-AFRAME.registerComponent('spatial-marker', {
+AFRAME.registerComponent('spatial-marker', { 
   schema: {
     // --- Painting zone selection/creation ---
     areaSelector:    { default: '.paintingArea' },
@@ -21,16 +21,16 @@ AFRAME.registerComponent('spatial-marker', {
 
     // --- Behavior toggles ---
     startSide:       { default: 'right', oneOf: ['left','right'] },
-    useHandSwapper:  { default: false },           // if true, expects hand-swapper NOT to attach size-picker on activate
+    useHandSwapper:  { default: false },           // if true, use 'hand-swapper'; else 'paint-tool-reset'
     patchHintSize:   { default: true },            // patch size-picker hint plane to use hintSize
 
-    // --- Size-picker passthrough (applied only once inside) ---
+    // --- Size-picker passthrough (applied whenever size-picker appears) ---
     sizes:           { default: [0.0025,0.005,0.01,0.02] },
     hintSize:        { default: 0.028 },
     imgHint:         { default: 'UI.png' },
     billboardHints:  { default: true },
 
-    // --- Color-picker passthrough (applied only once inside) ---
+    // --- Color-picker passthrough (applied whenever color-picker appears) ---
     colors:          { default: [
       '#ffffff','#000000','#ff8000','#ffbf00',
       '#ffff00','#bfff00','#80ff00','#40ff00',
@@ -50,7 +50,6 @@ AFRAME.registerComponent('spatial-marker', {
   init() {
     const el = this.el;
     const d  = this.data;
-
     if (!el.id) el.setAttribute('id', 'rig');
 
     // Ensure hands (reuse existing; optionally create if missing).
@@ -91,88 +90,57 @@ AFRAME.registerComponent('spatial-marker', {
       }
     }
 
-    // (Important) Do NOT attach size-picker / color-picker here.
-    // If for any reason they are present already, strip them until inside:
-    [L, R].forEach(h => {
-      if (!h) return;
-      if (h.hasAttribute('size-picker'))   h.removeAttribute('size-picker');
-      if (h.hasAttribute('color-picker'))  h.removeAttribute('color-picker');
-    });
-
     // Patch size-picker hint plane sizing once.
     if (d.patchHintSize) this._patchHintSizeOnce();
 
-    // We'll configure UI once we first detect "inside".
-    this._configuredOnce = false;
+    // --- KEY PART: apply configs whenever these UIs are attached ---
+    const onInit = (evt) => {
+      const name = evt.detail?.name;
+      if (name === 'size-picker') {
+        this._applySizePickerOptions(evt.target);
+      } else if (name === 'color-picker') {
+        this._applyColorPickerOptions(evt.target);
+      }
+    };
+    // Listen on both hands for UI (re)attachments triggered by controller on entry/swap
+    L && L.addEventListener('componentinitialized', onInit);
+    R && R.addEventListener('componentinitialized', onInit);
+
+    // Also try to apply immediately if already inside and components already attached
+    this._applyIfPresent();
   },
 
-tick() {
-  if (this._configuredOnce) return;
-
-  const pac = this.el.components['painting-area-controller'];
-  if (!pac || !pac.inside) return;
-
-  const d = this.data;
-  const left  = document.getElementById('left-hand');
-  const right = document.getElementById('right-hand');
-
-  const brush   = document.querySelector('[active-brush]');
-  const palette = brush === left ? right : left;
-
-  let configuredSomething = false;
-
-  // --- size-picker (only if already attached by controller) ---
-  if (brush?.components['size-picker']) {
-    brush.setAttribute('size-picker', {
-      sizes: d.sizes,
-      hintSize: d.hintSize,
-      imgHint: d.imgHint,
-      billboardHints: d.billboardHints
+  // Re-apply after initial entry, or if components were present before we attached listeners
+  _applyIfPresent(){
+    const L = document.getElementById('left-hand');
+    const R = document.getElementById('right-hand');
+    [L,R].forEach(h=>{
+      if (!h) return;
+      if (h.components['size-picker'])  this._applySizePickerOptions(h);
+      if (h.components['color-picker']) this._applyColorPickerOptions(h);
     });
-    configuredSomething = true;
-  }
+  },
 
-  // --- color-picker (only if already attached by controller) ---
-  if (palette?.components['color-picker']) {
-    const colors = this._parseColors(d.colors);
-    // Prefer passing as array object (works when schema type is array).
-    // If your color-picker expects string, uncomment the string form:
-    // palette.setAttribute('color-picker', `colors: ${colors.join(',')}`);
-    palette.setAttribute('color-picker', { colors });
-    configuredSomething = true;
-  }
+  // ---------- APPLY CONFIGS ----------
+  _applySizePickerOptions(handEl){
+    // Only configure if this is the BRUSH hand (has active-brush), else ignore
+    const isBrush = handEl.hasAttribute('active-brush');
+    if (!isBrush) return;
+    handEl.setAttribute('size-picker', {
+      sizes: this.data.sizes,
+      hintSize: this.data.hintSize,
+      imgHint: this.data.imgHint,
+      billboardHints: this.data.billboardHints
+    });
+  },
 
-  if (configuredSomething) this._configuredOnce = true;
-},
-
-// Helpers: robustly parse colors whether array or a single string
-_parseColors(input) {
-  if (Array.isArray(input)) return input.map(c => this._normHex(c)).filter(Boolean);
-  if (typeof input === 'string') {
-    return input
-      .split(/,|\s+/)                    // split by comma OR whitespace
-      .map(s => s.replace(/^['"]|['"]$/g, '')) // strip wrapping quotes
-      .map(c => this._normHex(c))
-      .filter(Boolean);
-  }
-  return [];
-},
-
-_normHex(x) {
-  if (!x) return null;
-  let s = (''+x).trim();
-  if (!s) return null;
-  // Accept #RGB or #RRGGBB (no alpha). Expand #RGB to #RRGGBB.
-  const m3 = /^#([0-9a-fA-F]{3})$/.exec(s);
-  if (m3) {
-    const [r,g,b] = m3[1].split('');
-    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
-  }
-  const m6 = /^#([0-9a-fA-F]{6})$/.exec(s);
-  if (m6) return `#${m6[1].toLowerCase()}`;
-  return null; // drop invalids like #00ff55ff (has alpha)
-},
-
+  _applyColorPickerOptions(handEl){
+    // Only configure if this is the PALETTE hand (no active-brush), else ignore
+    const isBrush = handEl.hasAttribute('active-brush');
+    if (isBrush) return;
+    const colors = this._parseColors(this.data.colors);
+    handEl.setAttribute('color-picker', { colors }); // your updated color-picker reacts via update()
+  },
 
   // ---- helpers ----
   _ensureHand(id, side, allowCreate) {
@@ -227,11 +195,32 @@ _normHex(x) {
       return p;
     };
     P._spatialMarkerPatched = true;
+  },
 
-    
+  _parseColors(input) {
+    if (Array.isArray(input)) return input.map(c=>this._normHex(c)).filter(Boolean);
+    if (typeof input === 'string') {
+      return input
+        .split(/,|\s+/)
+        .map(s => s.replace(/^['"]|['"]$/g,''))
+        .map(c => this._normHex(c))
+        .filter(Boolean);
+    }
+    return [];
+  },
+  _normHex(x){
+    if (!x) return null;
+    let s = (''+x).trim();
+    // #RGB -> #RRGGBB, or #RRGGBB; reject alpha
+    const m3 = /^#([0-9a-fA-F]{3})$/.exec(s);
+    if (m3){
+      const [r,g,b] = m3[1].split('');
+      return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+    }
+    const m6 = /^#([0-9a-fA-F]{6})$/.exec(s);
+    if (m6) return `#${m6[1].toLowerCase()}`;
+    return null;
   }
-
-  
 });
 
 
