@@ -26,7 +26,7 @@ AFRAME.registerComponent('spatial-marker', {
 
     // --- Size-picker passthrough (applied whenever size-picker appears) ---
     sizes:           { default: [0.0025,0.005,0.01,0.02] },
-    hintSize:        { default: 0.028 },
+    hintSize:        { default: 0.1 },
     imgHint:         { default: 'UI.png' },
     billboardHints:  { default: true },
 
@@ -441,7 +441,7 @@ AFRAME.registerComponent('paint-tool-reset', {
     });
 
     // Painter tools
-    painter.setAttribute('draw-line', 'color:#ffffff; thickness:0.02; minDist:0.005');
+    painter.setAttribute('draw-line', 'color:#ffffff; thickness:0.0025; minDist:0.005');
     painter.setAttribute('active-brush','');
 
     const dl = painter.components['draw-line'];
@@ -649,13 +649,12 @@ AFRAME.registerComponent('draw-line', {
 });
 
 // 5) SIZE-PICKER
-// 5) SIZE-PICKER (with initial thickness sync)
 AFRAME.registerComponent('size-picker',{
   schema:{
     sizes:{ default:[0.0025,0.005,0.01,0.02] },
 
     // One square hint per hand
-    hintSize:        { default: 0.028 },       // width = height (m)
+    hintSize:        { default: 0.1 },       // width = height (m)
     hintTint:        { default: '#111' },
     hintOpacity:     { default: 0.9 },
     imgHint:         { default: 'UI.png' },    // selector or URL (optional)
@@ -802,8 +801,6 @@ AFRAME.registerComponent('size-picker',{
     return 'right';
   }
 });
-
-
 
 
 // 6) COLOR-PICKER — rebuilds on colors change + robust parsing
