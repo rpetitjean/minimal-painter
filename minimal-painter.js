@@ -1105,7 +1105,7 @@ AFRAME.registerComponent('button-colorizer', {
     grip: { type: 'color', default: '#eaff00' },
 
     useEmissive:       { default: true },
-    emissiveIntensity: { default: 0.5 },
+    emissiveIntensity: { default: 1 },
     overrideBaseColor: { default: true },
     debug:             { default: false }
   },
