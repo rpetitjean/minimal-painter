@@ -305,8 +305,8 @@ AFRAME.registerComponent('painting-area-controller', {
     // Right: A red / B blue / Grip yellow. Left: X red / Y blue / Grip yellow.
     const isRight = (painter === this.rightHand);
     const scheme = isRight
-      ? { a:'#E94462', b:'#80A8FF', grip:'#E2EC72' }
-      : { x:'#E94462', y:'#80A8FF', grip:'#E2EC72' };
+      ? { a:'#E94462', b:'#80A8FF', grip:'#d4e700' }
+      : { x:'#E94462', y:'#80A8FF', grip:'#d4e700' };
 
     bcPainter.applyScheme(scheme);
     if (bcPalette) bcPalette.clearScheme();
@@ -1106,7 +1106,7 @@ AFRAME.registerComponent('button-colorizer', {
 
     useEmissive:       { default: true },
     emissiveIntensity: { default: 1 },
-    overrideBaseColor: { default: false },
+    overrideBaseColor: { default: true },
     debug:             { default: false }
   },
 
