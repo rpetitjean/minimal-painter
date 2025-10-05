@@ -1,10 +1,5 @@
-
 /**
- * SPATIAL-MARKER (no-UI-on-awake version)
- * One-liner setup for your VR painter rig.
- *
- * Usage (keep your current rig/children):
- * <a-entity id="rig" spatial-marker></a-entity>
+
  */
 
 AFRAME.registerComponent('spatial-marker', { 
@@ -16,7 +11,7 @@ AFRAME.registerComponent('spatial-marker', {
     areaPosition:    { default: '0 0 -4' },        // "x y z"
     areaRotation:    { default: '-90 0 0' },       // "x y z"
     areaColor:       { default: '#7BC8A4' },
-    areaOpacity:     { default: 0.0 },
+    areaOpacity:     { default: 0.01 },
     areaTransparent: { default: true },
 
     // --- Behavior toggles ---
