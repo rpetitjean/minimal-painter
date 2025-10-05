@@ -14,11 +14,6 @@ AFRAME.registerComponent('spatial-marker', {
     areaOpacity:     { default: 0.01 },
     areaTransparent: { default: true },
 
-    // --- Behavior toggles ---
-    startSide:       { default: 'right', oneOf: ['left','right'] },
-    useHandSwapper:  { default: false },           // if true, use 'hand-swapper'; else 'paint-tool-reset'
-    patchHintSize:   { default: true },            // patch size-picker hint plane to use hintSize
-
     // --- Size-picker passthrough (applied whenever size-picker appears) ---
     sizes:           { default: [0.0025,0.005,0.01,0.02] },
     hintSize:        { default: 0.1 },
@@ -33,13 +28,7 @@ AFRAME.registerComponent('spatial-marker', {
       '#00ffff','#00bfff','#0080ff','#0040ff',
       '#0000ff','#4000ff','#8000ff','#bf00ff',
       '#ff00ff','#ff00bf','#ff0080','#ff0040'
-    ]},
-
-    // --- Locomotion / rig targeting ---
-    rigSelector:     { default: '#rig' },
-
-    // --- Safety ---
-    createHandsIfMissing: { default: true }
+    ]}
   },
 
   init() {
@@ -47,61 +36,37 @@ AFRAME.registerComponent('spatial-marker', {
     const d  = this.data;
     if (!el.id) el.setAttribute('id', 'rig');
 
-    // Ensure hands (reuse existing; optionally create if missing).
-    const L = this._ensureHand('left-hand',  'left',  d.createHandsIfMissing);
-    const R = this._ensureHand('right-hand', 'right', d.createHandsIfMissing);
-
-    // Ensure locomotion targets the rig.
-    [L, R].forEach(h => {
-      if (!h) return;
-      if (!h.components['thumbstick-controls']) {
-        h.setAttribute('thumbstick-controls', `rigSelector: ${d.rigSelector}`);
-      } else {
-        h.setAttribute('thumbstick-controls', 'rigSelector', d.rigSelector);
-      }
-    });
+    const L = document.getElementById('left-hand');
+    const R = document.getElementById('right-hand');
 
     // Auto-create area if requested and none found.
     if (!document.querySelector(d.areaSelector) && d.autoArea) {
       this._createAreaPlane();
     }
 
-    // Mount core behaviors.
+    // Mount core behaviors (always use paint-tool-reset).
     el.setAttribute('painting-area-controller', { areaSelector: d.areaSelector });
-    if (d.useHandSwapper) {
-      el.setAttribute('hand-swapper', '');
-    } else {
-      el.setAttribute('paint-tool-reset', '');
+    el.setAttribute('paint-tool-reset', '');
+
+    // Start side: always right.
+    const ptr = el.components['paint-tool-reset'];
+    if (ptr && typeof ptr.assignTools === 'function') {
+      ptr.assignTools('right', /*force*/ true);
     }
 
-    // Start side selection.
-    const chooser = d.useHandSwapper ? el.components['hand-swapper']
-                                     : el.components['paint-tool-reset'];
-    if (chooser) {
-      if (d.useHandSwapper && typeof chooser.activate === 'function') {
-        chooser.activate(d.startSide);
-      } else if (!d.useHandSwapper && typeof chooser.assignTools === 'function') {
-        chooser.assignTools(d.startSide, /*force*/ true);
-      }
-    }
+    // Always patch size-picker hint plane sizing.
+    this._patchHintSizeOnce();
 
-    // Patch size-picker hint plane sizing once.
-    if (d.patchHintSize) this._patchHintSizeOnce();
-
-    // --- KEY PART: apply configs whenever these UIs are attached ---
+    // Re-apply options whenever size/color pickers (re)attach (entry / swap).
     const onInit = (evt) => {
       const name = evt.detail?.name;
-      if (name === 'size-picker') {
-        this._applySizePickerOptions(evt.target);
-      } else if (name === 'color-picker') {
-        this._applyColorPickerOptions(evt.target);
-      }
+      if (name === 'size-picker')  this._applySizePickerOptions(evt.target);
+      if (name === 'color-picker') this._applyColorPickerOptions(evt.target);
     };
-    // Listen on both hands for UI (re)attachments triggered by controller on entry/swap
     L && L.addEventListener('componentinitialized', onInit);
     R && R.addEventListener('componentinitialized', onInit);
 
-    // Also try to apply immediately if already inside and components already attached
+    // Apply immediately if already present.
     this._applyIfPresent();
   },
 
@@ -119,8 +84,7 @@ AFRAME.registerComponent('spatial-marker', {
   // ---------- APPLY CONFIGS ----------
   _applySizePickerOptions(handEl){
     // Only configure if this is the BRUSH hand (has active-brush), else ignore
-    const isBrush = handEl.hasAttribute('active-brush');
-    if (!isBrush) return;
+    if (!handEl.hasAttribute('active-brush')) return;
     handEl.setAttribute('size-picker', {
       sizes: this.data.sizes,
       hintSize: this.data.hintSize,
@@ -131,27 +95,12 @@ AFRAME.registerComponent('spatial-marker', {
 
   _applyColorPickerOptions(handEl){
     // Only configure if this is the PALETTE hand (no active-brush), else ignore
-    const isBrush = handEl.hasAttribute('active-brush');
-    if (isBrush) return;
+    if (handEl.hasAttribute('active-brush')) return;
     const colors = this._parseColors(this.data.colors);
-    handEl.setAttribute('color-picker', { colors }); // your updated color-picker reacts via update()
+    handEl.setAttribute('color-picker', { colors }); // relies on color-picker.update
   },
 
   // ---- helpers ----
-  _ensureHand(id, side, allowCreate) {
-    let hand = document.getElementById(id);
-    if (!hand && !allowCreate) return null;
-    if (!hand) {
-      hand = document.createElement('a-entity');
-      hand.setAttribute('id', id);
-      this.el.appendChild(hand);
-    }
-    if (!hand.getAttribute('meta-touch-controls')) {
-      hand.setAttribute('meta-touch-controls', `hand: ${side}`);
-    }
-    return hand;
-  },
-
   _createAreaPlane() {
     const d = this.data;
     const plane = document.createElement('a-plane');
@@ -205,7 +154,7 @@ AFRAME.registerComponent('spatial-marker', {
   },
   _normHex(x){
     if (!x) return null;
-    let s = (''+x).trim();
+    const s = (''+x).trim();
     // #RGB -> #RRGGBB, or #RRGGBB; reject alpha
     const m3 = /^#([0-9a-fA-F]{3})$/.exec(s);
     if (m3){
