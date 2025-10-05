@@ -19,7 +19,28 @@
     <a-scene>
 
           <!-- PC & VR Rig -->
-    <a-entity  id="rig" spatial-marker>
+    <a-entity  id="rig"  spatial-marker="
+ areaSelector: .paintingArea;
+autoArea: true;
+areaSize: 4 4;
+areaPosition: 0 0 -4;
+areaRotation: -90 0 0;
+areaColor: #7BC8A4;
+areaOpacity: 0.1;
+areaTransparent: true;
+startSide: right;
+useHandSwapper: true;
+patchHintSize: true;
+sizes: 0.0025,0.005,0.01,0.02;
+hintSize: 0.5;
+imgHint: UI.png;
+billboardHints: true;
+colors:
+#ffffff,#000000,#ff8000,#ffbf00,#ffff00,#bfff00,#80ff00,#40ff00,
+#00ff00,#00ff40,#00ff80,#00ffbf,#00ffff,#00bfff,#0080ff,#0040ff,
+#0000ff,#4000ff,#8000ff,#bf00ff,#ff00ff,#ff00bf,#ff0080,#ff0040;
+rigSelector: #rig;
+createHandsIfMissing: true;">
       <a-box id="camera" camera="fov:75; near: 0.1; far: 700" device-detector="xr: true, mobile: false" position="0 1.7 0"   visible="false" ></a-box>
       <a-entity id="left-hand"  meta-touch-controls="hand: left"></a-entity>
       <a-entity id="right-hand" meta-touch-controls="hand: right"></a-entity>
