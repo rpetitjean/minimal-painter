@@ -1,5 +1,4 @@
 
-
 /**
  * SPATIAL-MARKER (no-UI-on-awake version)
  * One-liner setup for your VR painter rig.
@@ -192,7 +191,11 @@ AFRAME.registerComponent('spatial-marker', {
       return p;
     };
     P._spatialMarkerPatched = true;
+
+    
   }
+
+  
 });
 
 
