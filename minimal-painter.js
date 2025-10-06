@@ -656,27 +656,33 @@ AFRAME.registerComponent('size-picker',{
   },
 
   // ---------- data prep ----------
-  _prepareSizes(){
-    const MIN_T = 0.001, MAX_T = 0.04;
+_prepareSizes(){
+  // absolute domain for brush thickness
+  const MIN_T = 0.001, MAX_T = 0.04;
 
-    const raw = Array.isArray(this.data.sizes) ? this.data.sizes : (''+this.data.sizes).split(',');
-    const nums = raw
-      .map(x => +x)
-      .filter(v => Number.isFinite(v) && v > 0)
-      .map(v => Math.min(MAX_T, Math.max(MIN_T, v)));  // clamp to [0.001, 0.04]
+  // parse → clamp → keep first 4
+  const raw = Array.isArray(this.data.sizes) ? this.data.sizes : (''+this.data.sizes).split(',');
+  const nums = raw
+    .map(x => +x)
+    .filter(v => Number.isFinite(v) && v > 0)
+    .map(v => Math.min(MAX_T, Math.max(MIN_T, v)));
 
-    this.sizes = nums.slice(0,4);
-    if (!this.sizes.length) this.sizes = [0.01]; // fallback in-range
+  this.sizes = nums.slice(0, 4);
+  if (!this.sizes.length) this.sizes = [0.01]; // sane default in range
 
-    // Visual radii proportional to clamped thickness
-    const minT = Math.min(...this.sizes);
-    const maxT = Math.max(...this.sizes);
-    const rMin = 0.0075, rMax = 0.015;
-    this._radii = this.sizes.map(t=>{
-      const f = (maxT>minT) ? (t-minT)/(maxT-minT) : 0.5;
-      return rMin + f*(rMax - rMin);
-    });
-  },
+  // --- PROPORTIONAL RINGS (absolute, not relative to provided set) ---
+  // visual radius range for the a-rings
+  const rMin = 0.0075, rMax = 0.015;
+
+  // perceptual mapping: use sqrt so small steps at the low end are visible
+  const map = t => {
+    const f = Math.sqrt((t - MIN_T) / (MAX_T - MIN_T));   // 0..1
+    return rMin + f * (rMax - rMin);
+  };
+
+  this._radii = this.sizes.map(map);
+},
+
 
   // ---------- UI ----------
   _buildUI(){
