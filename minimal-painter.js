@@ -15,7 +15,7 @@ AFRAME.registerComponent('spatial-marker', {
     areaTransparent: { default: true },
 
     // --- Size-picker passthrough (applied whenever size-picker appears) ---
-    sizes:           { default: [0.0025,0.005,0.01, 0.05] },
+    sizes:           { default: [0.0025,0.005,0.01,0.02,] },
     hintSize:        { default: 0.1 },
     imgHint:         { default: 'UI.png' },
     billboardHints:  { default: true },
@@ -594,70 +594,59 @@ AFRAME.registerComponent('draw-line', {
 });
 
 // 5) SIZE-PICKER
+// SIZE-PICKER — reactive to `sizes`, max 4 options, rings scale with thickness
 AFRAME.registerComponent('size-picker',{
   schema:{
-    sizes:{ default:[0.0025,0.005,0.01,0.02] },
-
-    // One square hint per hand
-    hintSize:        { default: 0.1 },       // width = height (m)
-    hintTint:        { default: '#111' },
-    hintOpacity:     { default: 0.9 },
-    imgHint:         { default: 'UI.png' },    // selector or URL (optional)
-    billboardHints:  { default: true },        // face camera
-    faceOutward:     { default: true },        // if not billboarding, point normal outward
-
-    // Side placement (controller local space)
-    outerOffset:     { default: 0.04 },        // 4 cm out to ±X
-    raise:           { default: 0.01 },        // 1 cm up on +Y
-    forward:         { default: 0.00 },        // Z tweak if needed
-
-    // keep your button to cycle sizes
-    cycleWithBY:     { default: true }
+    sizes:{ default:[0.0025,0.005,0.01,0.02] },  // will be capped to 4
+    hintSize:{ default: 0.028 },
+    hintTint:{ default: '#111' },
+    hintOpacity:{ default: 0.9 },
+    imgHint:{ default: 'UI.png' },
+    billboardHints:{ default: true },
+    faceOutward:{ default: true },
+    outerOffset:{ default: 0.04 },
+    raise:{ default: 0.01 },
+    forward:{ default: 0.00 },
+    cycleWithBY:{ default: true }
   },
 
   init(){
-    // --- choose index that matches current brush thickness ---
-    this.idx = this._computeInitialIndex();   // <— NEW: sync to draw-line.thickness
+    this.idx = 0;
+    this._prepareSizes();          // derive this.sizes (<=4) and visual radii
 
-    // --- size UI (as before) ---
     this._buildUI();
     this._highlight();
 
-    // --- single side hint ---
-    this._handSide = this._getHandSide(); // 'right' | 'left'
+    this._handSide = this._getHandSide();
     this._hint = this._makeSideHint();
     this._placeSideHint();
 
-    // input to cycle sizes (optional)
     if (this.data.cycleWithBY) {
       this.onBtn = this.onBtn.bind(this);
-      ['bbuttondown','ybuttondown'].forEach(evt => this.el.addEventListener(evt, this.onBtn));
+      ['bbuttondown','ybuttondown'].forEach(e => this.el.addEventListener(e, this.onBtn));
     }
   },
 
-  // NEW: pick the closest size to current draw-line thickness
-  _computeInitialIndex(){
-    try{
-      const brush = document.querySelector('[active-brush]');
-      const dl = brush?.components?.['draw-line'];
-      const t  = dl?.data?.thickness;
-      const arr = this.data.sizes || [];
-      if (!arr.length || typeof t !== 'number') return 0;
-      let best = 0, diff = Infinity;
-      for (let i=0;i<arr.length;i++){
-        const d = Math.abs(arr[i] - t);
-        if (d < diff){ diff = d; best = i; }
-      }
-      return best;
-    } catch(e){ return 0; }
+  update(old){
+    // React when sizes change
+    if (!old || JSON.stringify(old.sizes)!==JSON.stringify(this.data.sizes)) {
+      const prevIdx = this.idx;
+      this._prepareSizes();
+      // Clamp selection to new range
+      this.idx = Math.min(prevIdx, this.sizes.length ? this.sizes.length-1 : 0);
+      // Rebuild rings
+      if (this.container) this.container.remove();
+      this._buildUI();
+      this._highlight();
+    }
   },
 
   remove(){
     if (this.data.cycleWithBY) {
-      ['bbuttondown','ybuttondown'].forEach(evt => this.el.removeEventListener(evt, this.onBtn));
+      ['bbuttondown','ybuttondown'].forEach(e => this.el.removeEventListener(e, this.onBtn));
     }
-    if (this.container) this.container.remove();
-    if (this._hint) this._hint.remove();
+    this.container?.remove();
+    this._hint?.remove();
   },
 
   tick(){
@@ -669,70 +658,79 @@ AFRAME.registerComponent('size-picker',{
     this._hint.object3D?.lookAt(camPos);
   },
 
-  // ---------- size UI ----------
+  // ---------- data prep ----------
+  _prepareSizes(){
+    // Parse, keep positive finite, cap to 4 (minimalistic)
+    const raw = Array.isArray(this.data.sizes) ? this.data.sizes : (''+this.data.sizes).split(',');
+    const nums = raw.map(x=>+x).filter(v=>Number.isFinite(v) && v>0);
+    this.sizes = nums.slice(0,4);
+    if (!this.sizes.length) this.sizes = [0.01]; // fallback
+
+    // Compute visual radii for rings proportional to thickness
+    const minT = Math.min(...this.sizes);
+    const maxT = Math.max(...this.sizes);
+    const rMin = 0.0075, rMax = 0.015; // visual bounds
+    this._radii = this.sizes.map(t=>{
+      let f = (maxT>minT) ? (t-minT)/(maxT-minT) : 0.5;
+      return rMin + f*(rMax - rMin);
+    });
+  },
+
+  // ---------- UI ----------
   _buildUI(){
-    const radii=[0.0075,0.01,0.0125,0.015], gap=0.03;
+    const gap=0.03;
     this.container=document.createElement('a-entity');
     this.container.setAttribute('position','0 -0.05 -0.055');
     this.container.setAttribute('rotation','90 0 0');
     this.el.appendChild(this.container);
 
-    this.cells = radii.map((r,i)=>{
+    this.cells = this._radii.map((r,i)=>{
       const ring=document.createElement('a-ring');
-      ring.setAttribute('radius-inner',r*0.8);
-      ring.setAttribute('radius-outer',r);
+      ring.setAttribute('radius-inner', r*0.8);
+      ring.setAttribute('radius-outer', r);
       ring.setAttribute('material','color:#E0E0E0;side:double');
-      ring.object3D.position.set((i-(radii.length-1)/2)*gap,0,0);
+      ring.object3D.position.set((i-(this._radii.length-1)/2)*gap,0,0);
       this.container.appendChild(ring);
       return ring;
     });
   },
 
   _highlight(){
-    this.cells.forEach((ring,i)=> {
+    // Update ring highlight + brush thickness
+    this.cells?.forEach((ring,i)=> {
       ring.setAttribute('material', i===this.idx ? 'color:#D6D6D6;side:double' : 'color:#888;side:double');
     });
-    const t = this.data.sizes[this.idx];
+    const t = this.sizes[this.idx];
     const brush = document.querySelector('[active-brush]');
     if (brush) brush.setAttribute('draw-line','thickness', t);
   },
 
   onBtn(){
-    this.idx = (this.idx+1)%this.data.sizes.length;
+    if (!this.sizes.length) return;
+    this.idx = (this.idx+1)%this.sizes.length;
     this._highlight();
   },
 
-  // ---------- single side hint ----------
+  // ---------- hint ----------
   _makeSideHint(){
     const s = this.data.hintSize;
     const p = document.createElement('a-plane');
     p.setAttribute('width',  s);
     p.setAttribute('height', s);
-
     const mat = this.data.imgHint
       ? `src:${this.data.imgHint}; side:double; transparent:true`
       : `color:${this.data.hintTint}; opacity:${this.data.hintOpacity}; transparent:true; side:double`;
     p.setAttribute('material', mat);
-
-    // attach to the controller entity
     this.el.appendChild(p);
     return p;
   },
 
   _placeSideHint(){
     if (!this._hint?.object3D) return;
-
     const sign = (this._handSide === 'right') ? +2 : -2; // +X for right, -X for left
     const x = sign * this.data.outerOffset;
-    const y = this.data.raise;
-    const z = this.data.forward;
-
-    // position
-    this._hint.object3D.position.set(x, y, z);
-
-    // orientation if not billboarding: face outward along ±X
+    this._hint.object3D.position.set(x, this.data.raise, this.data.forward);
     if (!this.data.billboardHints && this.data.faceOutward) {
-      // plane faces +Z by default; rotate around Y so normal points ±X
       this._hint.object3D.rotation.set(0, sign * Math.PI/2, 0);
     }
   },
@@ -746,6 +744,7 @@ AFRAME.registerComponent('size-picker',{
     return 'right';
   }
 });
+
 
 
 // 6) COLOR-PICKER — rebuilds on colors change + robust parsing
