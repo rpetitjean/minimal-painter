@@ -15,7 +15,7 @@ AFRAME.registerComponent('spatial-marker', {
     areaTransparent: { default: true },
 
     // --- Size-picker passthrough (applied whenever size-picker appears) ---
-    sizes:           { default: [0.0025,0.005,0.01,0.02, 0.05] },
+    sizes:           { default: [0.0025,0.005,0.01, 0.05] },
     hintSize:        { default: 0.1 },
     imgHint:         { default: 'UI.png' },
     billboardHints:  { default: true },
