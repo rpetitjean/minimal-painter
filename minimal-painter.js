@@ -22,12 +22,13 @@ AFRAME.registerComponent('spatial-marker', {
 
     // --- Color-picker passthrough (applied whenever color-picker appears) ---
     colors:          { default: [
-      '#ffffff','#000000','#ff8000','#ffbf00',
-      '#ffff00','#bfff00','#80ff00','#40ff00',
-      '#00ff00','#00ff40','#00ff80','#00ffbf',
-      '#00ffff','#00bfff','#0080ff','#0040ff',
-      '#0000ff','#4000ff','#8000ff','#bf00ff',
-      '#ff00ff','#ff00bf','#ff0080','#ff0040'
+,
+  '#f2f23a','#d8d835',  
+  '#f4bd36','#d29930','#f58436','#d06430',   
+  '#f45336','#d13230','#f33a3a','#d13636','#f3398c','#d13470',   
+  '#f339f3','#d134d8','#9933f3','#7300d8','#3333f3','#0000d8',   
+  '#3399f3','#0073d8','#33f339','#00d836',   
+  '#99f339','#70d134'    
     ]}
   },
 
