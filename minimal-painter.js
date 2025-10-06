@@ -10,12 +10,12 @@ AFRAME.registerComponent('spatial-marker', {
     areaSize:        { default: '4 4' },           // "width height"
     areaPosition:    { default: '0 0 -4' },        // "x y z"
     areaRotation:    { default: '-90 0 0' },       // "x y z"
-    areaColor:       { default: '#7BC8A4' },
-    areaOpacity:     { default: 0.01 },
+    areaColor:       { default: '#57ff94'},
+    areaOpacity:     { default: 0.1 },
     areaTransparent: { default: true },
 
     // --- Size-picker passthrough (applied whenever size-picker appears) ---
-    sizes:           { default: [0.0025,0.005,0.01,0.02] },
+    sizes:           { default: [0.0025,0.005,0.01,0.02, 0.05] },
     hintSize:        { default: 0.1 },
     imgHint:         { default: 'UI.png' },
     billboardHints:  { default: true },
