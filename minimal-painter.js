@@ -595,9 +595,10 @@ AFRAME.registerComponent('draw-line', {
 
 // 5) SIZE-PICKER
 // SIZE-PICKER — reactive to `sizes`, max 4 options, rings scale with thickness
+// SIZE-PICKER — reactive, max 4, rings scale with thickness, clamp to [0.001, 0.04]
 AFRAME.registerComponent('size-picker',{
   schema:{
-    sizes:{ default:[0.0025,0.005,0.01,0.02] },  // will be capped to 4
+    sizes:{ default:[0.0025,0.005,0.01,0.02] },  // will be clamped & capped to 4
     hintSize:{ default: 0.028 },
     hintTint:{ default: '#111' },
     hintOpacity:{ default: 0.9 },
@@ -612,8 +613,7 @@ AFRAME.registerComponent('size-picker',{
 
   init(){
     this.idx = 0;
-    this._prepareSizes();          // derive this.sizes (<=4) and visual radii
-
+    this._prepareSizes();          // derive this.sizes (<=4, clamped) and visual radii
     this._buildUI();
     this._highlight();
 
@@ -628,13 +628,10 @@ AFRAME.registerComponent('size-picker',{
   },
 
   update(old){
-    // React when sizes change
     if (!old || JSON.stringify(old.sizes)!==JSON.stringify(this.data.sizes)) {
       const prevIdx = this.idx;
       this._prepareSizes();
-      // Clamp selection to new range
       this.idx = Math.min(prevIdx, this.sizes.length ? this.sizes.length-1 : 0);
-      // Rebuild rings
       if (this.container) this.container.remove();
       this._buildUI();
       this._highlight();
@@ -660,18 +657,23 @@ AFRAME.registerComponent('size-picker',{
 
   // ---------- data prep ----------
   _prepareSizes(){
-    // Parse, keep positive finite, cap to 4 (minimalistic)
-    const raw = Array.isArray(this.data.sizes) ? this.data.sizes : (''+this.data.sizes).split(',');
-    const nums = raw.map(x=>+x).filter(v=>Number.isFinite(v) && v>0);
-    this.sizes = nums.slice(0,4);
-    if (!this.sizes.length) this.sizes = [0.01]; // fallback
+    const MIN_T = 0.001, MAX_T = 0.04;
 
-    // Compute visual radii for rings proportional to thickness
+    const raw = Array.isArray(this.data.sizes) ? this.data.sizes : (''+this.data.sizes).split(',');
+    const nums = raw
+      .map(x => +x)
+      .filter(v => Number.isFinite(v) && v > 0)
+      .map(v => Math.min(MAX_T, Math.max(MIN_T, v)));  // clamp to [0.001, 0.04]
+
+    this.sizes = nums.slice(0,4);
+    if (!this.sizes.length) this.sizes = [0.01]; // fallback in-range
+
+    // Visual radii proportional to clamped thickness
     const minT = Math.min(...this.sizes);
     const maxT = Math.max(...this.sizes);
-    const rMin = 0.0075, rMax = 0.015; // visual bounds
+    const rMin = 0.0075, rMax = 0.015;
     this._radii = this.sizes.map(t=>{
-      let f = (maxT>minT) ? (t-minT)/(maxT-minT) : 0.5;
+      const f = (maxT>minT) ? (t-minT)/(maxT-minT) : 0.5;
       return rMin + f*(rMax - rMin);
     });
   },
@@ -696,7 +698,6 @@ AFRAME.registerComponent('size-picker',{
   },
 
   _highlight(){
-    // Update ring highlight + brush thickness
     this.cells?.forEach((ring,i)=> {
       ring.setAttribute('material', i===this.idx ? 'color:#D6D6D6;side:double' : 'color:#888;side:double');
     });
@@ -727,9 +728,8 @@ AFRAME.registerComponent('size-picker',{
 
   _placeSideHint(){
     if (!this._hint?.object3D) return;
-    const sign = (this._handSide === 'right') ? +2 : -2; // +X for right, -X for left
-    const x = sign * this.data.outerOffset;
-    this._hint.object3D.position.set(x, this.data.raise, this.data.forward);
+    const sign = (this._handSide === 'right') ? +2 : -2;
+    this._hint.object3D.position.set(sign * this.data.outerOffset, this.data.raise, this.data.forward);
     if (!this.data.billboardHints && this.data.faceOutward) {
       this._hint.object3D.rotation.set(0, sign * Math.PI/2, 0);
     }
@@ -744,6 +744,7 @@ AFRAME.registerComponent('size-picker',{
     return 'right';
   }
 });
+
 
 
 
