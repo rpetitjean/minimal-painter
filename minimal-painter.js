@@ -296,34 +296,46 @@ AFRAME.registerComponent('painting-area-controller', {
   },
 
   // ---------- tint helpers ----------
-  _ensureColorizer(handEl) {
-    if (!handEl) return null;
-    if (!handEl.components['button-colorizer']) {
-      handEl.setAttribute('button-colorizer','');
+// helper to get colorizer safely
+_ensureColorizer(handEl) {
+  if (!handEl) return null;
+  if (!handEl.components['button-colorizer']) {
+    handEl.setAttribute('button-colorizer','enabled:false'); // start disabled
+  }
+  return handEl.components['button-colorizer'];
+},
+
+_applyTints(painter, palette) {
+  const bcPainter = this._ensureColorizer(painter);
+  const bcPalette = this._ensureColorizer(palette);
+  if (!bcPainter) return;
+
+  const isRight = (painter === this.rightHand);
+  const scheme = isRight
+    ? { a:'#E94462', b:'#80A8FF', grip:'#d4e700' }
+    : { x:'#E94462', y:'#80A8FF', grip:'#d4e700' };
+
+  // Painter hand ON + apply
+  bcPainter.el.setAttribute('button-colorizer','enabled', true);
+  bcPainter.applyScheme(scheme);
+
+  // Palette hand OFF + clear
+  if (bcPalette) {
+    bcPalette.el.setAttribute('button-colorizer','enabled', false);
+    bcPalette.clearScheme();
+  }
+},
+
+_clearTints() {
+  [this.leftHand, this.rightHand].forEach(h => {
+    const bc = h && h.components['button-colorizer'];
+    if (bc) {
+      bc.el.setAttribute('button-colorizer','enabled', false);
+      bc.clearScheme();
     }
-    return handEl.components['button-colorizer'];
-  },
+  });
+},
 
- _applyTints(painter, palette) {
-    const bcPainter = this._ensureColorizer(painter);
-    const bcPalette = this._ensureColorizer(palette);
-    if (!bcPainter) return;
-
-    const isRight = (painter === this.rightHand);
-    const scheme = isRight ? this.CONTROLLER_COLORS.right : this.CONTROLLER_COLORS.left;
-
-  
-
-    bcPainter.applyScheme(scheme);
-    if (bcPalette) bcPalette.clearScheme();
-  },
-
-  _clearTints() {
-    [this.leftHand, this.rightHand].forEach(h => {
-      const bc = h && h.components['button-colorizer'];
-      if (bc) bc.clearScheme();
-    });
-  },
 
   // ---------- safety: stop strokes when outside ----------
   _forceReleaseBothHands() {
@@ -1145,13 +1157,14 @@ AFRAME.registerComponent('thumbstick-controls', {
 // 8) BUTTON-COLORIZER
 AFRAME.registerComponent('button-colorizer', {
   schema: {
+    enabled:           { default: true },  // <- NEW: opt-in tinting
+
     useEmissive:       { default: true },
     overrideBaseColor: { default: true },
     debug:             { default: false },
 
-    // Emissive controls (per part)
-    emissiveFace:      { default: 0.30 }, // A/B/X/Y subtle glow
-    emissiveGrip:      { default: 0.00 }  // keep grip non-emissive by default
+    emissiveFace:      { default: 0.30 },
+    emissiveGrip:      { default: 0.00 }
   },
 
   init() {
@@ -1159,31 +1172,24 @@ AFRAME.registerComponent('button-colorizer', {
     this._original      = new Map();
     this._lastScheme    = null;
     this._reapplyFrames = 0;
-    this._lastRootId    = null; // detect mesh root changes
+    this._lastRootId    = null;
 
     // Bind
-    this._onModelLoaded      = () => { this._collectTargets(); this._scheduleReapply(); };
-    this._onObject3DSet      = () => { this._collectTargets(); this._scheduleReapply(); };
-    this._onChildAttached    = () => { this._scheduleReapply(); };
-    this._onChildDetached    = () => { this._scheduleReapply(); };
-    this._onButtonStateChange= () => { this._scheduleReapply(); };
+    this._onModelLoaded       = () => { this._collectTargets(); this._scheduleReapply(); };
+    this._onObject3DSet       = () => { this._collectTargets(); this._scheduleReapply(); };
+    this._onChildAttached     = () => { this._scheduleReapply(); };
+    this._onChildDetached     = () => { this._scheduleReapply(); };
+    this._onButtonStateChange = () => { this._scheduleReapply(); };
 
-    // Core listeners
+    // Listeners
     this.el.addEventListener('model-loaded', this._onModelLoaded);
     this.el.addEventListener('object3dset',  this._onObject3DSet);
     this.el.addEventListener('child-attached', this._onChildAttached);
     this.el.addEventListener('child-detached', this._onChildDetached);
 
-    // Button events that can swap meshes on Quest
-    [
-      'gripdown','gripup',
-      'abuttondown','abuttonup',
-      'bbuttondown','bbuttonup',
-      'xbuttondown','xbuttonup',
-      'ybuttondown','ybuttonup'
-    ].forEach(e => this.el.addEventListener(e, this._onButtonStateChange));
+    ['gripdown','gripup','abuttondown','abuttonup','bbuttondown','bbuttonup','xbuttondown','xbuttonup','ybuttondown','ybuttonup']
+      .forEach(e => this.el.addEventListener(e, this._onButtonStateChange));
 
-    // If mesh is already there, collect now
     if (this.el.getObject3D('mesh')) {
       this._collectTargets();
       this._scheduleReapply();
@@ -1194,32 +1200,45 @@ AFRAME.registerComponent('button-colorizer', {
     this._inv = new THREE.Matrix4();
   },
 
+  update(old) {
+    if (!old) return;
+
+    // Toggle enable/disable at runtime
+    if (old.enabled !== this.data.enabled) {
+      if (!this.data.enabled) {
+        // turning OFF: restore everything & stop future re-applies
+        this.clearScheme();
+        this._reapplyFrames = 0;
+      } else {
+        // turning ON: try to reapply current scheme
+        this._scheduleReapply();
+      }
+    }
+  },
+
   remove() {
     this.clearScheme();
     this.el.removeEventListener('model-loaded', this._onModelLoaded);
     this.el.removeEventListener('object3dset',  this._onObject3DSet);
     this.el.removeEventListener('child-attached', this._onChildAttached);
     this.el.removeEventListener('child-detached', this._onChildDetached);
-    [
-      'gripdown','gripup',
-      'abuttondown','abuttonup',
-      'bbuttondown','bbuttonup',
-      'xbuttondown','xbuttonup',
-      'ybuttondown','ybuttonup'
-    ].forEach(e => this.el.removeEventListener(e, this._onButtonStateChange));
+
+    ['gripdown','gripup','abuttondown','abuttonup','bbuttondown','bbuttonup','xbuttondown','xbuttonup','ybuttondown','ybuttonup']
+      .forEach(e => this.el.removeEventListener(e, this._onButtonStateChange));
   },
 
   tick() {
-    // Run a few frames after any “possibly changed” event
+    if (!this.data.enabled) return;        // <- honor enabled
     if (this._reapplyFrames > 0) {
       this._reapplyFrames--;
       this._applyNow();
     }
   },
 
-  // Public API
+  // -------- Public API --------
   applyScheme(scheme) {
     this._lastScheme = scheme || null;
+    if (!this.data.enabled) return;        // don't paint while disabled
     this._scheduleReapply();
   },
 
@@ -1236,16 +1255,18 @@ AFRAME.registerComponent('button-colorizer', {
     this._original.clear();
   },
 
-  // Internals
-  _scheduleReapply(n = 6) { // spread over a few frames to catch late submeshes
+  // -------- Internals --------
+  _scheduleReapply(n = 6) {
+    if (!this.data.enabled) return;        // <- honor enabled
     this._reapplyFrames = Math.max(this._reapplyFrames, n);
   },
 
   _applyNow() {
+    if (!this.data.enabled) return;        // <- honor enabled
     const mesh = this.el.getObject3D('mesh');
     if (!mesh || !this._lastScheme) return;
 
-    // If mesh root changed, forget previous originals (they're stale materials)
+    // If mesh root changed, forget old originals
     const rootId = mesh.uuid;
     if (this._lastRootId && this._lastRootId !== rootId) {
       this._original.clear();
@@ -1253,7 +1274,7 @@ AFRAME.registerComponent('button-colorizer', {
     }
     this._lastRootId = rootId;
 
-    // Refresh targets each time (controllers can toggle parts)
+    // Refresh targets each time
     this._collectTargets();
 
     // Restore then apply
@@ -1321,7 +1342,7 @@ AFRAME.registerComponent('button-colorizer', {
     if (!this._original.size) return;
     for (const [uuid, mats] of this._original.entries()) {
       const node = this._findNodeByUUID(uuid);
-      if (!node) continue; // node disappeared (mesh swapped), skip
+      if (!node) continue;
       node.material = Array.isArray(node.material) ? mats : mats[0];
       node.material.needsUpdate = true;
     }
@@ -1345,7 +1366,6 @@ AFRAME.registerComponent('button-colorizer', {
     mesh.traverse(n => {
       if (!n.isMesh || !n.name) return;
       const name = n.name.toLowerCase().replace(/\s+/g, '');
-
       let matchedKey = null;
       for (const key of order) {
         if (key === 'grip') {
@@ -1399,7 +1419,6 @@ AFRAME.registerComponent('button-colorizer', {
   },
 
   _tintNode(node, hex, whichKey) {
-    // Save original materials once per node
     if (!this._original.has(node.uuid)) {
       const mats = Array.isArray(node.material) ? node.material : [node.material];
       this._original.set(node.uuid, mats);
