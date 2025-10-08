@@ -312,10 +312,7 @@ AFRAME.registerComponent('painting-area-controller', {
     const isRight = (painter === this.rightHand);
     const scheme = isRight ? this.CONTROLLER_COLORS.right : this.CONTROLLER_COLORS.left;
 
-    // Dim emissive for bright yellow grip
-    if (bcPainter.data && scheme.grip) {
-      bcPainter.data.emissiveIntensity = 0.3;
-    }
+  
 
     bcPainter.applyScheme(scheme);
     if (bcPalette) bcPalette.clearScheme();
@@ -1148,15 +1145,19 @@ AFRAME.registerComponent('thumbstick-controls', {
 // 8) BUTTON-COLORIZER
 AFRAME.registerComponent('button-colorizer', {
   schema: {
+    // Global toggles
     useEmissive:       { default: true },
-    emissiveIntensity: { default: .3 },
     overrideBaseColor: { default: true },
-    debug:             { default: false }
+    debug:             { default: false },
+
+    // Emissive controls (per part). Keep face buttons subtle; grip = 0 by default.
+    emissiveFace:      { default: 0.30 }, // A/B/X/Y
+    emissiveGrip:      { default: 0.00 }  // <- zero glow for grip to avoid whitening
   },
 
   init() {
     this._targets  = {a:[], b:[], x:[], y:[], grip:[]};
-    this._original = new Map();  // node.uuid -> [original materials]
+    this._original = new Map();
     this._pending  = null;
 
     this._onModelLoaded = () => {
@@ -1166,7 +1167,6 @@ AFRAME.registerComponent('button-colorizer', {
     this.el.addEventListener('model-loaded', this._onModelLoaded);
     if (this.el.getObject3D('mesh')) this._onModelLoaded();
 
-    // scratch
     this._v = new THREE.Vector3();
     this._inv = new THREE.Matrix4();
   },
@@ -1184,63 +1184,44 @@ AFRAME.registerComponent('button-colorizer', {
     // restore anything previously tinted by us
     this._restoreTintedOnly();
 
-    // 1) Try by names first (A↔X, B↔Y synonyms)
-    const equiv = {
-      a: ['a','x'], x: ['x','a'],
-      b: ['b','y'], y: ['y','b'],
-      grip: ['grip']
-    };
+    const equiv = { a:['a','x'], x:['x','a'], b:['b','y'], y:['y','b'], grip:['grip'] };
+
     Object.keys(scheme).forEach(key => {
       const hex = scheme[key];
       if (!hex) return;
       const keysToApply = equiv[key] || [key];
       keysToApply.forEach(k => {
-        (this._targets[k] || []).forEach(node => this._tintNode(node, hex));
+        (this._targets[k] || []).forEach(node => this._tintNode(node, hex, k)); // pass key
       });
     });
 
-    // 2) Positional fallback if the two face buttons collapsed into one bucket
-    // Build pair list from all face buckets we have.
-    const faces = this._uniqueNodes(
-      [].concat(this._targets.a, this._targets.b, this._targets.x, this._targets.y)
-    );
+    // positional fallback for face buttons kept as-is...
+    const faces = this._uniqueNodes([].concat(this._targets.a, this._targets.b, this._targets.x, this._targets.y));
     if (faces.length >= 2) {
-      // If either pair is missing or one bucket grabbed both, split by local Y.
       const needLeft  = (scheme.x || scheme.y);
       const needRight = (scheme.a || scheme.b);
-
       const missingLeft  = needLeft  && (this._targets.x.length === 0 || this._targets.y.length === 0);
       const missingRight = needRight && (this._targets.a.length === 0 || this._targets.b.length === 0);
-
       if (missingLeft || missingRight) {
-        const side = this._getSide(); // 'left'|'right'
-        const sorted = faces
-          .map(n => ({ n, y: this._localY(n) }))
-          .sort((p,q) => q.y - p.y); // top first
-
+        const side = this._getSide();
+        const sorted = faces.map(n => ({ n, y: this._localY(n) })).sort((p,q) => q.y - p.y);
         const top    = sorted[0]?.n;
         const bottom = sorted[1]?.n;
 
-        // Decide top/bottom colors from the scheme we received.
-        // Left:  top = Y, bottom = X.
-        // Right: top = B, bottom = A.
         const topColor =
-          (side === 'left')  ? (scheme.y || this.data.y) :
-          (side === 'right') ? (scheme.b || this.data.b) : null;
-
+          (side === 'left')  ? (scheme.y) :
+          (side === 'right') ? (scheme.b) : null;
         const botColor =
-          (side === 'left')  ? (scheme.x || this.data.x) :
-          (side === 'right') ? (scheme.a || this.data.a) : null;
+          (side === 'left')  ? (scheme.x) :
+          (side === 'right') ? (scheme.a) : null;
 
-        if (top && topColor)     this._tintNode(top, topColor);
-        if (bottom && botColor)  this._tintNode(bottom, botColor);
+        if (top && topColor)    this._tintNode(top, topColor, side === 'left' ? 'y' : 'b');
+        if (bottom && botColor) this._tintNode(bottom, botColor, side === 'left' ? 'x' : 'a');
       }
     }
 
     if (this.data.debug) {
-      console.log('[button-colorizer] scheme applied. Face counts:',
-        'a',this._targets.a.length,'b',this._targets.b.length,
-        'x',this._targets.x.length,'y',this._targets.y.length);
+      console.log('[button-colorizer] scheme applied.');
     }
   },
 
@@ -1259,14 +1240,12 @@ AFRAME.registerComponent('button-colorizer', {
 
   // ---- internals ----
   _uniqueNodes(arr) {
-    const seen = new Set();
-    const out = [];
+    const seen = new Set(); const out = [];
     arr.forEach(n => { if (n && !seen.has(n.uuid)) { seen.add(n.uuid); out.push(n); } });
     return out;
   },
 
   _localY(node) {
-    // convert node world pos into controller local space, return Y
     node.getWorldPosition(this._v);
     this._inv.copy(this.el.object3D.matrixWorld).invert();
     this._v.applyMatrix4(this._inv);
@@ -1310,14 +1289,11 @@ AFRAME.registerComponent('button-colorizer', {
     mesh.traverse(n => {
       if (!n.isMesh || !n.name) return;
       const name = n.name.toLowerCase().replace(/\s+/g, '');
-
       let matchedKey = null;
       for (const key of order) {
         if (key === 'grip') {
           if (name.includes('grip') || name.includes('squeeze')) { matchedKey = 'grip'; break; }
-        } else if (this._btnMatch(name, key, n)) {
-          matchedKey = key; break;
-        }
+        } else if (this._btnMatch(name, key, n)) { matchedKey = key; break; }
       }
       if (matchedKey) this._targets[matchedKey].push(n);
     });
@@ -1332,7 +1308,6 @@ AFRAME.registerComponent('button-colorizer', {
   },
 
   _btnMatch(name, letter, node) {
-    // 1) explicit patterns
     const pats = [
       `button_${letter}`, `${letter}_button`,
       `button-${letter}`, `${letter}-button`,
@@ -1341,19 +1316,15 @@ AFRAME.registerComponent('button-colorizer', {
     ];
     if (pats.some(p => name.includes(p))) return true;
 
-    // 2) common extras
     const extras = [
       `${letter}cap`, `cap_${letter}`, `${letter}-cap`,
       `${letter}face`, `face_${letter}`, `${letter}-face`
     ];
     if (extras.some(p => name.includes(p))) return true;
 
-    // 3) (NO LONGER) using naive "button+letter anywhere" — too noisy.
-    // 4) tiny-geometry heuristic for single-letter meshes (x/y)
     if ((letter === 'x' || letter === 'y') && this._letterAlone(name, letter) && this._seemsButtonLike(node)) {
       return true;
     }
-
     return false;
   },
 
@@ -1367,10 +1338,11 @@ AFRAME.registerComponent('button-colorizer', {
     if (!g) return false;
     if (!g.boundingSphere) g.computeBoundingSphere?.();
     const r = g.boundingSphere ? g.boundingSphere.radius : Infinity;
-    return r > 0 && r < 0.05; // tweak if your model scale differs
+    return r > 0 && r < 0.05;
   },
 
-  _tintNode(node, hex) {
+  // NOTE: now gets the button key as 3rd argument
+  _tintNode(node, hex, whichKey) {
     if (!this._original.has(node.uuid)) {
       const mats = Array.isArray(node.material) ? node.material : [node.material];
       this._original.set(node.uuid, mats);
@@ -1379,12 +1351,22 @@ AFRAME.registerComponent('button-colorizer', {
     }
 
     const matsNow = Array.isArray(node.material) ? node.material : [node.material];
+    const isGrip  = (whichKey === 'grip');
+    const emissiveIntensity = isGrip ? this.data.emissiveGrip : this.data.emissiveFace;
+
     matsNow.forEach(m => {
       if (!m) return;
       if (this.data.overrideBaseColor && m.color) m.color.set(hex);
+
       if (this.data.useEmissive && 'emissive' in m) {
-        m.emissive.set(hex);
-        if ('emissiveIntensity' in m) m.emissiveIntensity = this.data.emissiveIntensity;
+        if (emissiveIntensity > 0) {
+          m.emissive.set(hex);
+          if ('emissiveIntensity' in m) m.emissiveIntensity = emissiveIntensity;
+        } else {
+          // explicitly kill emissive for grip if set to 0
+          m.emissive.set(0x000000);
+          if ('emissiveIntensity' in m) m.emissiveIntensity = 0;
+        }
       }
       m.needsUpdate = true;
     });
