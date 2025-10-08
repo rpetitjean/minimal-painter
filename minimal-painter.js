@@ -594,10 +594,8 @@ AFRAME.registerComponent('draw-line', {
 });
 
 // 5) SIZE-PICKER
-// SIZE-PICKER — reactive to `sizes`, max 4 options, rings scale with thickness
-// SIZE-PICKER — reactive, max 4, rings scale with thickness, clamp to [0.001, 0.04]
-// SIZE-PICKER — 4 options max, clamp [0.001,0.04], no-overlap gaps,
-// band width encodes thickness, outer radius moderate, live updates
+// SIZE-PICKER — 4 options max, clamp [0.001,0.04],
+// same outer radius for all rings, band width ∝ thickness (relative to the 4 values)
 AFRAME.registerComponent('size-picker',{
   schema:{
     sizes:{ default:[0.0025,0.005,0.01,0.02] },  // clamped & capped to 4
@@ -659,89 +657,68 @@ AFRAME.registerComponent('size-picker',{
 
   // ---------- data prep ----------
   _prepareSizes(){
-    // Absolute thickness domain
+    // Clamp & keep first 4
     const MIN_T = 0.001, MAX_T = 0.04;
-
-    // Parse → clamp → first 4
     const raw = Array.isArray(this.data.sizes) ? this.data.sizes : (''+this.data.sizes).split(',');
     const nums = raw
       .map(x => +x)
       .filter(v => Number.isFinite(v) && v > 0)
       .map(v => Math.min(MAX_T, Math.max(MIN_T, v)));
-
     this._sizes = nums.slice(0,4);
-    if (!this._sizes.length) this._sizes = [0.01]; // safe fallback
+    if (!this._sizes.length) this._sizes = [0.01];
 
-    // --- Visual mapping ---
-    // 1) OUTER RADIUS: keep moderate so mids don't look gigantic
-    //    (log spread for a bit of separation, but restrained)
-    const rOutMin = 0.012, rOutMax = 0.028;
-    const log = v => Math.log(v);
-    const denom = log(MAX_T) - log(MIN_T);
-    const rOut = t => rOutMin + ((log(t) - log(MIN_T)) / denom) * (rOutMax - rOutMin);
+    // Same outer radius for ALL rings
+    this._R_OUT = 0.020; // 2 cm outer radius (adjust to taste)
 
-    // 2) BAND WIDTH: the main carrier of "thickness feel"
-    //    Linear map; adjust bandMax if you want even bolder large sizes
-    const bandMin = 0.0015, bandMax = 0.012;
-    const normLin = t => (t - MIN_T) / (MAX_T - MIN_T);
-    const band = t => bandMin + normLin(t) * (bandMax - bandMin);
+    // Band width encodes size, *proportional to the 4 values* you chose
+    const tMin = Math.min(...this._sizes);
+    const tMax = Math.max(...this._sizes);
+    const rel = (t) => (tMax>tMin) ? (t - tMin)/(tMax - tMin) : 0.5;
 
-    // Build ring dimensions per size
+    // Band width range (inner safety so the ring never disappears)
+    const BAND_MIN = 0.0012;                           // thinnest ring band
+    const BAND_MAX = Math.min(0.013, this._R_OUT - 0.002); // thickest band, safe cap
+
     this._rings = this._sizes.map(t => {
-      const out = rOut(t);
-      const bw  = band(t);
-      const inn = Math.max(out - bw, 0.001);
-      return { t, rOuter: out, rInner: inn, band: bw };
+      const bw  = BAND_MIN + rel(t) * (BAND_MAX - BAND_MIN); // linear in your set
+      const rIn = Math.max(this._R_OUT - bw, 0.001);
+      return { t, rOuter: this._R_OUT, rInner: rIn, band: bw };
     });
   },
 
   // ---------- UI ----------
   _buildUI(){
-    // Horizontal layout with guaranteed gaps using cumulative spacing
-    const gapMargin = 0.012;  // fixed minimum gap between outer rims
-    const zStep     = 0.0015; // slight z offset to avoid z-fighting
+    // Fixed spacing since all outer radii are the same
+    const gap = (this._R_OUT * 2) + 0.02; // diameter + 2cm margin
+    const zStep = 0.0015;
 
     this.container = document.createElement('a-entity');
     this.container.setAttribute('position','0 -0.05 -0.055');
     this.container.setAttribute('rotation','90 0 0');
     this.el.appendChild(this.container);
 
-    // Compute x positions so rings never overlap
-    const positions = [];
-    let x = 0;
-    this._rings.forEach((r, i) => {
-      if (i === 0) {
-        // first ring centered left of origin by its own radius
-        x = -r.rOuter;
-      } else {
-        const prev = this._rings[i-1];
-        // move right by prev outer radius + current outer radius + gap
-        x += prev.rOuter + r.rOuter + gapMargin;
-      }
-      positions.push(x);
-    });
+    // Center positions across X
+    const count = this._rings.length;
+    const startX = -((count - 1) * gap) / 2;
 
-    // Center the group horizontally
-    const centerOffset = (positions[0] + positions[positions.length-1]) / 2;
-    for (let i=0;i<positions.length;i++) positions[i] -= centerOffset;
-
-    // Create rings
     this.cells = this._rings.map((r,i)=>{
       const ring = document.createElement('a-ring');
       ring.setAttribute('radius-inner', r.rInner);
       ring.setAttribute('radius-outer', r.rOuter);
       ring.setAttribute('material','color:#E0E0E0;side:double;metalness:0;roughness:1');
-      ring.object3D.position.set(positions[i], 0, i * zStep);
+      ring.object3D.position.set(startX + i*gap, 0, i*zStep);
       this.container.appendChild(ring);
       return ring;
     });
   },
 
   _highlight(){
-    // Visual highlight + set brush thickness
     this.cells?.forEach((ring,i)=> {
-      ring.setAttribute('material', i===this.idx ? 'color:#D6D6D6;side:double;metalness:0;roughness:1'
-                                                 : 'color:#888;side:double;metalness:0;roughness:1');
+      ring.setAttribute('material',
+        i===this.idx
+          ? 'color:#D6D6D6;side:double;metalness:0;roughness:1'
+          : 'color:#888;side:double;metalness:0;roughness:1'
+      );
     });
     const t = this._rings[this.idx]?.t;
     if (t != null) {
@@ -758,7 +735,7 @@ AFRAME.registerComponent('size-picker',{
 
   // ---------- hint ----------
   _makeSideHint(){
-    const s = this.data.hintSize; // fixed — never altered by size mapping
+    const s = this.data.hintSize; // fixed
     const p = document.createElement('a-plane');
     p.setAttribute('width',  s);
     p.setAttribute('height', s);
@@ -788,7 +765,6 @@ AFRAME.registerComponent('size-picker',{
     return 'right';
   }
 });
-
 
 // 6) COLOR-PICKER — rebuilds on colors change + robust parsing
 AFRAME.registerComponent('color-picker',{
@@ -1017,7 +993,6 @@ AFRAME.registerComponent('color-picker',{
   }
 });
 
-
 // 7) THUMBSTICK-CONTROLS
 AFRAME.registerComponent('thumbstick-controls', {
     schema: {
@@ -1136,7 +1111,6 @@ AFRAME.registerComponent('thumbstick-controls', {
         this.el.removeEventListener('thumbstickmoved', this.thumbstickMoved);
     }
 });
-
 
 // 8) BUTTON-COLORIZER
 AFRAME.registerComponent('button-colorizer', {
