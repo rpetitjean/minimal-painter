@@ -657,7 +657,7 @@ AFRAME.registerComponent('size-picker',{
 
   // ---------- data prep ----------
 _prepareSizes(){
-  // Clamp input sizes to [0.001, 0.04] and keep first 4
+  // Clamp input to [0.001, 0.04], keep 4 max
   const MIN_T = 0.001, MAX_T = 0.04;
   const raw = Array.isArray(this.data.sizes) ? this.data.sizes : (''+this.data.sizes).split(',');
   const nums = raw
@@ -667,44 +667,63 @@ _prepareSizes(){
   this._sizes = nums.slice(0,4);
   if (!this._sizes.length) this._sizes = [0.01];
 
-  // Constant radius for all rings
-  this._R_OUT = 0.02;   // 2 cm outer radius (feel free to adjust)
-  this._K = 1.2;        // visual scale factor from brush thickness → band width
+  // --- Mapping: draw-line thickness → ring size ---
+  // We'll make the radius proportional to sqrt(thickness) for better visual spacing
+  const MIN_R = 0.008;   // smallest visual radius (for MIN_T)
+  const MAX_R = 0.028;   // largest visual radius (for MAX_T)
+  const norm = t => (Math.sqrt(t) - Math.sqrt(MIN_T)) / (Math.sqrt(MAX_T) - Math.sqrt(MIN_T));
+  const mapR = t => MIN_R + norm(t) * (MAX_R - MIN_R);
 
-  // Build geometry values
+  // Constant line stroke width for all rings
+  this._BAND = 0.0015;
+
+  // Build data for rings
   this._rings = this._sizes.map(t => {
-    const bw = this._K * t;                          // proportional to actual thickness
-    const rIn = Math.max(this._R_OUT - bw, 0.001);   // inner radius = outer - band
-    return { t, rOuter: this._R_OUT, rInner: rIn, band: bw };
+    const rOuter = mapR(t);
+    const rInner = Math.max(rOuter - this._BAND, 0.001);
+    return { t, rOuter, rInner };
   });
 },
 
 
   // ---------- UI ----------
 _buildUI(){
-  // Fixed outer radius → equal circle size for all
-  const gap = (this._R_OUT * 2) + 0.02;  // spacing between centers
   const zStep = 0.0015;
+  const gap = 0.01; // minimum margin between rings
 
   this.container = document.createElement('a-entity');
   this.container.setAttribute('position','0 -0.05 -0.055');
   this.container.setAttribute('rotation','90 0 0');
   this.el.appendChild(this.container);
 
-  // Center the 4 rings horizontally
-  const count = this._rings.length;
-  const startX = -((count - 1) * gap) / 2;
+  // Compute cumulative spacing so large rings don’t overlap
+  const positions = [];
+  let x = 0;
+  this._rings.forEach((r, i) => {
+    if (i === 0) {
+      x = -r.rOuter;
+    } else {
+      const prev = this._rings[i - 1];
+      x += prev.rOuter + r.rOuter + gap;
+    }
+    positions.push(x);
+  });
+
+  // Center them horizontally
+  const centerOffset = (positions[0] + positions[positions.length - 1]) / 2;
+  for (let i = 0; i < positions.length; i++) positions[i] -= centerOffset;
 
   this.cells = this._rings.map((r,i)=>{
     const ring = document.createElement('a-ring');
     ring.setAttribute('radius-inner', r.rInner);
     ring.setAttribute('radius-outer', r.rOuter);
     ring.setAttribute('material','color:#E0E0E0;side:double;metalness:0;roughness:1');
-    ring.object3D.position.set(startX + i*gap, 0, i*zStep);
+    ring.object3D.position.set(positions[i], 0, i * zStep);
     this.container.appendChild(ring);
     return ring;
   });
 },
+
 
 
   _highlight(){
