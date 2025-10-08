@@ -613,18 +613,24 @@ AFRAME.registerComponent('draw-line', {
 // 5) SIZE-PICKER
 // SIZE-PICKER — 4 options max, clamp [0.001,0.04],
 // same outer radius for all rings, band width ∝ thickness (relative to the 4 values)
+// 5) SIZE-PICKER — 4 options max, clamp [0.001,0.04],
+// ring outer radius encodes size; band width constant
 AFRAME.registerComponent('size-picker',{
   schema:{
-    sizes:{ default:[0.0025,0.005,0.01,0.02] },  // clamped & capped to 4
-    hintSize:{ default: 0.028 },
+    sizes:{ default:[0.0025,0.005,0.01,0.02] },
+    // --- hint props you want to control from spatial-marker
+    hintSize:{ default: 0.1 },
+    imgHint:{ default: 'UI.png' },
     hintTint:{ default: '#111' },
     hintOpacity:{ default: 0.9 },
-    imgHint:{ default: 'UI.png' },
     billboardHints:{ default: true },
+
+    // placement
     faceOutward:{ default: true },
     outerOffset:{ default: 0.04 },
     raise:{ default: 0.01 },
     forward:{ default: 0.00 },
+
     cycleWithBY:{ default: true }
   },
 
@@ -635,7 +641,9 @@ AFRAME.registerComponent('size-picker',{
     this._highlight();
 
     this._handSide = this._getHandSide();
-    this._hint = this._makeSideHint();
+
+    // create hint once, but keep a reference so we can resize in update()
+    this._hint = this._ensureSideHint();
     this._placeSideHint();
 
     if (this.data.cycleWithBY) {
@@ -645,6 +653,7 @@ AFRAME.registerComponent('size-picker',{
   },
 
   update(old){
+    // react to sizes change (existing behavior)
     if (!old || JSON.stringify(old.sizes)!==JSON.stringify(this.data.sizes)) {
       const prevIdx = this.idx;
       this._prepareSizes();
@@ -652,6 +661,17 @@ AFRAME.registerComponent('size-picker',{
       if (this.container) this.container.remove();
       this._buildUI();
       this._highlight();
+    }
+
+    // NEW: react to hint props changing at runtime
+    if (old && (
+        old.hintSize      !== this.data.hintSize ||
+        old.imgHint       !== this.data.imgHint ||
+        old.hintTint      !== this.data.hintTint ||
+        old.hintOpacity   !== this.data.hintOpacity ||
+        old.billboardHints!== this.data.billboardHints
+    )) {
+      this._refreshSideHint();
     }
   },
 
@@ -664,6 +684,7 @@ AFRAME.registerComponent('size-picker',{
   },
 
   tick(){
+    // billboard only if requested
     if (!this.data.billboardHints || !this._hint) return;
     const cam = this.el.sceneEl?.camera?.el;
     if (!cam?.object3D) return;
@@ -673,86 +694,65 @@ AFRAME.registerComponent('size-picker',{
   },
 
   // ---------- data prep ----------
-// --- mapping: constant stroke; size encoded by ring outer radius ---
-_prepareSizes(){
-  // 1) Clamp incoming sizes to [0.001, 0.04] and keep first 4
-  const MIN_T = 0.001, MAX_T = 0.04;
-  const raw = Array.isArray(this.data.sizes) ? this.data.sizes : (''+this.data.sizes).split(',');
-  const nums = raw
-    .map(x => +x)
-    .filter(v => Number.isFinite(v) && v > 0)
-    .map(v => Math.min(MAX_T, Math.max(MIN_T, v)));
+  _prepareSizes(){
+    const MIN_T = 0.001, MAX_T = 0.04;
+    const raw = Array.isArray(this.data.sizes) ? this.data.sizes : (''+this.data.sizes).split(',');
+    const nums = raw
+      .map(x => +x)
+      .filter(v => Number.isFinite(v) && v > 0)
+      .map(v => Math.min(MAX_T, Math.max(MIN_T, v)));
 
-  this._sizes = nums.slice(0, 4);
-  if (!this._sizes.length) this._sizes = [0.01];
+    this._sizes = nums.slice(0, 4);
+    if (!this._sizes.length) this._sizes = [0.01];
 
-  // 2) Ring stroke (band) is CONSTANT for all options
-  const BAND = 0.0012;              // constant visual stroke width (m)
+    const BAND = 0.0012;
+    const tMin = Math.min(...this._sizes);
+    const p    = 0.70;
+    const R_MIN = BAND + 0.0008;
+    const R_MAX = 0.030;
 
-  // 3) Outer radius is proportional to (t / tMin)^p
-  //    - tMin anchors the smallest ring
-  //    - p < 1 emphasizes differences at the low end
-  const tMin = Math.min(...this._sizes);
-  const p    = 0.70;                // exponent (0.5 = sqrt, 1.0 = linear)
-  const R_MIN = BAND + 0.0008;      // smallest ring outer radius (tiny but visible)
-  const R_MAX = 0.030;              // hard cap to keep the biggest ring in bounds
+    const mapRadius = (t) => Math.min(R_MAX, R_MIN * Math.pow(Math.max(1, t/tMin), p));
 
-  // Proportional mapping with cap
-  const mapRadius = (t) => {
-    const ratio = Math.max(1, t / tMin);          // >= 1
-    const r = R_MIN * Math.pow(ratio, p);         // multiplicative growth
-    return Math.min(R_MAX, r);
-  };
-
-  // Build ring geometry
-  this._rings = this._sizes.map(t => {
-    const rOuter = mapRadius(t);
-    const rInner = Math.max(rOuter - BAND, 0.001);
-    return { t, rOuter, rInner };
-  });
-},
-
-
+    this._rings = this._sizes.map(t => {
+      const rOuter = mapRadius(t);
+      const rInner = Math.max(rOuter - BAND, 0.001);
+      return { t, rOuter, rInner };
+    });
+  },
 
   // ---------- UI ----------
-_buildUI(){
-  const zStep = 0.0015;
-  const gap = 0.01; // minimum margin between rings
+  _buildUI(){
+    const zStep = 0.0015;
+    const gap = 0.01;
 
-  this.container = document.createElement('a-entity');
-  this.container.setAttribute('position','0 -0.05 -0.055');
-  this.container.setAttribute('rotation','90 0 0');
-  this.el.appendChild(this.container);
+    this.container = document.createElement('a-entity');
+    this.container.setAttribute('position','0 -0.05 -0.055');
+    this.container.setAttribute('rotation','90 0 0');
+    this.el.appendChild(this.container);
 
-  // Compute cumulative spacing so large rings don’t overlap
-  const positions = [];
-  let x = 0;
-  this._rings.forEach((r, i) => {
-    if (i === 0) {
-      x = -r.rOuter;
-    } else {
-      const prev = this._rings[i - 1];
-      x += prev.rOuter + r.rOuter + gap;
-    }
-    positions.push(x);
-  });
+    const positions = [];
+    let x = 0;
+    this._rings.forEach((r, i) => {
+      if (i === 0) x = -r.rOuter;
+      else {
+        const prev = this._rings[i - 1];
+        x += prev.rOuter + r.rOuter + gap;
+      }
+      positions.push(x);
+    });
+    const centerOffset = (positions[0] + positions[positions.length - 1]) / 2;
+    for (let i = 0; i < positions.length; i++) positions[i] -= centerOffset;
 
-  // Center them horizontally
-  const centerOffset = (positions[0] + positions[positions.length - 1]) / 2;
-  for (let i = 0; i < positions.length; i++) positions[i] -= centerOffset;
-
-  this.cells = this._rings.map((r,i)=>{
-    const ring = document.createElement('a-ring');
-    ring.setAttribute('radius-inner', r.rInner);
-    ring.setAttribute('radius-outer', r.rOuter);
-    ring.setAttribute('material','color:#E0E0E0;side:double;metalness:0;roughness:1');
-    ring.object3D.position.set(positions[i], 0, i * zStep);
-    this.container.appendChild(ring);
-    return ring;
-  });
-},
-
-
+    this.cells = this._rings.map((r,i)=>{
+      const ring = document.createElement('a-ring');
+      ring.setAttribute('radius-inner', r.rInner);
+      ring.setAttribute('radius-outer', r.rOuter);
+      ring.setAttribute('material','color:#E0E0E0;side:double;metalness:0;roughness:1');
+      ring.object3D.position.set(positions[i], 0, i * zStep);
+      this.container.appendChild(ring);
+      return ring;
+    });
+  },
 
   _highlight(){
     this.cells?.forEach((ring,i)=> {
@@ -776,17 +776,31 @@ _buildUI(){
   },
 
   // ---------- hint ----------
-  _makeSideHint(){
-    const s = this.data.hintSize; // fixed
+  _ensureSideHint(){
+    if (this._hint && this._hint.isConnected) return this._hint;
     const p = document.createElement('a-plane');
-    p.setAttribute('width',  s);
-    p.setAttribute('height', s);
+    p.setAttribute('width',  this.data.hintSize);
+    p.setAttribute('height', this.data.hintSize);
     const mat = this.data.imgHint
       ? `src:${this.data.imgHint}; side:double; transparent:true`
       : `color:${this.data.hintTint}; opacity:${this.data.hintOpacity}; transparent:true; side:double`;
     p.setAttribute('material', mat);
     this.el.appendChild(p);
+    this._hint = p;
     return p;
+  },
+
+  _refreshSideHint(){
+    const p = this._ensureSideHint();
+    // size
+    p.setAttribute('width',  this.data.hintSize);
+    p.setAttribute('height', this.data.hintSize);
+    // material
+    const mat = this.data.imgHint
+      ? `src:${this.data.imgHint}; side:double; transparent:true`
+      : `color:${this.data.hintTint}; opacity:${this.data.hintOpacity}; transparent:true; side:double`;
+    p.setAttribute('material', mat);
+    // orientation / position unchanged; billboard handled in tick()
   },
 
   _placeSideHint(){
@@ -807,6 +821,7 @@ _buildUI(){
     return 'right';
   }
 });
+
 
 // 6) COLOR-PICKER — rebuilds on colors change + robust parsing
 AFRAME.registerComponent('color-picker',{
