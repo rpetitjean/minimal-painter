@@ -1145,42 +1145,49 @@ AFRAME.registerComponent('thumbstick-controls', {
 // 8) BUTTON-COLORIZER
 AFRAME.registerComponent('button-colorizer', {
   schema: {
-    // Global toggles
     useEmissive:       { default: true },
     overrideBaseColor: { default: true },
     debug:             { default: false },
 
     // Emissive controls (per part)
-    emissiveFace:      { default: 0.30 }, // A/B/X/Y
-    emissiveGrip:      { default: 0.00 }  // <- keep grip non-emissive by default
+    emissiveFace:      { default: 0.30 }, // A/B/X/Y subtle glow
+    emissiveGrip:      { default: 0.00 }  // keep grip non-emissive by default
   },
 
   init() {
-    this._targets     = {a:[], b:[], x:[], y:[], grip:[]};
-    this._original    = new Map();
-    this._pending     = null;
-    this._lastScheme  = null;
+    this._targets       = {a:[], b:[], x:[], y:[], grip:[]};
+    this._original      = new Map();
+    this._lastScheme    = null;
+    this._reapplyFrames = 0;
+    this._lastRootId    = null; // detect mesh root changes
 
-    // Bind once
-    this._onModelLoaded = () => {
-      this._collectTargets();
-      this._reapplyIfNeeded();
-    };
-    this._onButtonStateChange = () => this._reapplyIfNeeded();
+    // Bind
+    this._onModelLoaded      = () => { this._collectTargets(); this._scheduleReapply(); };
+    this._onObject3DSet      = () => { this._collectTargets(); this._scheduleReapply(); };
+    this._onChildAttached    = () => { this._scheduleReapply(); };
+    this._onChildDetached    = () => { this._scheduleReapply(); };
+    this._onButtonStateChange= () => { this._scheduleReapply(); };
 
-    // Listen for model + controller button state changes
+    // Core listeners
     this.el.addEventListener('model-loaded', this._onModelLoaded);
-    if (this.el.getObject3D('mesh')) this._onModelLoaded();
+    this.el.addEventListener('object3dset',  this._onObject3DSet);
+    this.el.addEventListener('child-attached', this._onChildAttached);
+    this.el.addEventListener('child-detached', this._onChildDetached);
 
-    // Re-apply on typical input events that may swap meshes
-    const evs = [
+    // Button events that can swap meshes on Quest
+    [
       'gripdown','gripup',
       'abuttondown','abuttonup',
       'bbuttondown','bbuttonup',
       'xbuttondown','xbuttonup',
       'ybuttondown','ybuttonup'
-    ];
-    evs.forEach(e => this.el.addEventListener(e, this._onButtonStateChange));
+    ].forEach(e => this.el.addEventListener(e, this._onButtonStateChange));
+
+    // If mesh is already there, collect now
+    if (this.el.getObject3D('mesh')) {
+      this._collectTargets();
+      this._scheduleReapply();
+    }
 
     // scratch
     this._v = new THREE.Vector3();
@@ -1190,21 +1197,30 @@ AFRAME.registerComponent('button-colorizer', {
   remove() {
     this.clearScheme();
     this.el.removeEventListener('model-loaded', this._onModelLoaded);
-    const evs = [
+    this.el.removeEventListener('object3dset',  this._onObject3DSet);
+    this.el.removeEventListener('child-attached', this._onChildAttached);
+    this.el.removeEventListener('child-detached', this._onChildDetached);
+    [
       'gripdown','gripup',
       'abuttondown','abuttonup',
       'bbuttondown','bbuttonup',
       'xbuttondown','xbuttonup',
       'ybuttondown','ybuttonup'
-    ];
-    evs.forEach(e => this.el.removeEventListener(e, this._onButtonStateChange));
+    ].forEach(e => this.el.removeEventListener(e, this._onButtonStateChange));
   },
 
-  // ---- public API ----
+  tick() {
+    // Run a few frames after any “possibly changed” event
+    if (this._reapplyFrames > 0) {
+      this._reapplyFrames--;
+      this._applyNow();
+    }
+  },
+
+  // Public API
   applyScheme(scheme) {
-    // Cache and apply
     this._lastScheme = scheme || null;
-    this._applyNow();
+    this._scheduleReapply();
   },
 
   clearScheme() {
@@ -1220,21 +1236,28 @@ AFRAME.registerComponent('button-colorizer', {
     this._original.clear();
   },
 
-  // ---- internals ----
-  _reapplyIfNeeded() {
-    if (this._lastScheme) this._applyNow();
+  // Internals
+  _scheduleReapply(n = 6) { // spread over a few frames to catch late submeshes
+    this._reapplyFrames = Math.max(this._reapplyFrames, n);
   },
 
   _applyNow() {
     const mesh = this.el.getObject3D('mesh');
     if (!mesh || !this._lastScheme) return;
 
-    // Always refresh targets, in case the controller swapped meshes
+    // If mesh root changed, forget previous originals (they're stale materials)
+    const rootId = mesh.uuid;
+    if (this._lastRootId && this._lastRootId !== rootId) {
+      this._original.clear();
+      if (this.data.debug) console.log('[button-colorizer] mesh root changed; clearing originals cache');
+    }
+    this._lastRootId = rootId;
+
+    // Refresh targets each time (controllers can toggle parts)
     this._collectTargets();
 
-    // Restore previous tints, then re-apply fresh
+    // Restore then apply
     this._restoreTintedOnly();
-
     const scheme = this._lastScheme;
     const equiv = { a:['a','x'], x:['x','a'], b:['b','y'], y:['y','b'], grip:['grip'] };
 
@@ -1270,8 +1293,6 @@ AFRAME.registerComponent('button-colorizer', {
         if (bottom && botColor) this._tintNode(bottom, botColor, side === 'left' ? 'x' : 'a');
       }
     }
-
-    if (this.data.debug) console.log('[button-colorizer] scheme (re)applied.');
   },
 
   _uniqueNodes(arr) {
@@ -1300,7 +1321,7 @@ AFRAME.registerComponent('button-colorizer', {
     if (!this._original.size) return;
     for (const [uuid, mats] of this._original.entries()) {
       const node = this._findNodeByUUID(uuid);
-      if (!node) continue;
+      if (!node) continue; // node disappeared (mesh swapped), skip
       node.material = Array.isArray(node.material) ? mats : mats[0];
       node.material.needsUpdate = true;
     }
@@ -1324,6 +1345,7 @@ AFRAME.registerComponent('button-colorizer', {
     mesh.traverse(n => {
       if (!n.isMesh || !n.name) return;
       const name = n.name.toLowerCase().replace(/\s+/g, '');
+
       let matchedKey = null;
       for (const key of order) {
         if (key === 'grip') {
@@ -1376,8 +1398,8 @@ AFRAME.registerComponent('button-colorizer', {
     return r > 0 && r < 0.05;
   },
 
-  // now receives whichKey to pick per-part emissive
   _tintNode(node, hex, whichKey) {
+    // Save original materials once per node
     if (!this._original.has(node.uuid)) {
       const mats = Array.isArray(node.material) ? node.material : [node.material];
       this._original.set(node.uuid, mats);
