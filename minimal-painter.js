@@ -596,9 +596,11 @@ AFRAME.registerComponent('draw-line', {
 // 5) SIZE-PICKER
 // SIZE-PICKER — reactive to `sizes`, max 4 options, rings scale with thickness
 // SIZE-PICKER — reactive, max 4, rings scale with thickness, clamp to [0.001, 0.04]
+// SIZE-PICKER — 4 options max, clamp [0.001,0.04], no-overlap gaps,
+// band width encodes thickness, outer radius moderate, live updates
 AFRAME.registerComponent('size-picker',{
   schema:{
-    sizes:{ default:[0.0025,0.005,0.01,0.02] },  // will be clamped & capped to 4
+    sizes:{ default:[0.0025,0.005,0.01,0.02] },  // clamped & capped to 4
     hintSize:{ default: 0.028 },
     hintTint:{ default: '#111' },
     hintOpacity:{ default: 0.9 },
@@ -613,7 +615,7 @@ AFRAME.registerComponent('size-picker',{
 
   init(){
     this.idx = 0;
-    this._prepareSizes();          // derive this.sizes (<=4, clamped) and visual radii
+    this._prepareSizes();
     this._buildUI();
     this._highlight();
 
@@ -631,7 +633,7 @@ AFRAME.registerComponent('size-picker',{
     if (!old || JSON.stringify(old.sizes)!==JSON.stringify(this.data.sizes)) {
       const prevIdx = this.idx;
       this._prepareSizes();
-      this.idx = Math.min(prevIdx, this.sizes.length ? this.sizes.length-1 : 0);
+      this.idx = Math.min(prevIdx, this._sizes.length ? this._sizes.length-1 : 0);
       if (this.container) this.container.remove();
       this._buildUI();
       this._highlight();
@@ -656,75 +658,107 @@ AFRAME.registerComponent('size-picker',{
   },
 
   // ---------- data prep ----------
-_prepareSizes(){
-  const MIN_T = 0.001, MAX_T = 0.04;
+  _prepareSizes(){
+    // Absolute thickness domain
+    const MIN_T = 0.001, MAX_T = 0.04;
 
-  // Parse → clamp → keep first 4
-  const raw = Array.isArray(this.data.sizes) ? this.data.sizes : (''+this.data.sizes).split(',');
-  const nums = raw
-    .map(x => +x)
-    .filter(v => Number.isFinite(v) && v > 0)
-    .map(v => Math.min(MAX_T, Math.max(MIN_T, v)));
+    // Parse → clamp → first 4
+    const raw = Array.isArray(this.data.sizes) ? this.data.sizes : (''+this.data.sizes).split(',');
+    const nums = raw
+      .map(x => +x)
+      .filter(v => Number.isFinite(v) && v > 0)
+      .map(v => Math.min(MAX_T, Math.max(MIN_T, v)));
 
-  this.sizes = nums.slice(0, 4);
-  if (!this.sizes.length) this.sizes = [0.01]; // fallback in-range
+    this._sizes = nums.slice(0,4);
+    if (!this._sizes.length) this._sizes = [0.01]; // safe fallback
 
-  // --- Enhanced perceptual mapping ---
-  // We map the *apparent diameter* to brush thickness^0.33
-  // This makes small brushes visually larger than a linear mapping.
-  const rMin = 0.004;   // smallest visual radius
-  const rMax = 0.035;   // largest visual radius
-  const norm = t => (t - MIN_T) / (MAX_T - MIN_T);
-  const map  = t => rMin + Math.pow(norm(t), 1/3) * (rMax - rMin);
+    // --- Visual mapping ---
+    // 1) OUTER RADIUS: keep moderate so mids don't look gigantic
+    //    (log spread for a bit of separation, but restrained)
+    const rOutMin = 0.012, rOutMax = 0.028;
+    const log = v => Math.log(v);
+    const denom = log(MAX_T) - log(MIN_T);
+    const rOut = t => rOutMin + ((log(t) - log(MIN_T)) / denom) * (rOutMax - rOutMin);
 
-  this._radii = this.sizes.map(map);
-},
+    // 2) BAND WIDTH: the main carrier of "thickness feel"
+    //    Linear map; adjust bandMax if you want even bolder large sizes
+    const bandMin = 0.0015, bandMax = 0.012;
+    const normLin = t => (t - MIN_T) / (MAX_T - MIN_T);
+    const band = t => bandMin + normLin(t) * (bandMax - bandMin);
 
-
-
+    // Build ring dimensions per size
+    this._rings = this._sizes.map(t => {
+      const out = rOut(t);
+      const bw  = band(t);
+      const inn = Math.max(out - bw, 0.001);
+      return { t, rOuter: out, rInner: inn, band: bw };
+    });
+  },
 
   // ---------- UI ----------
-_buildUI(){
-  const gap = 0.04; // increased spacing between rings
-  this.container = document.createElement('a-entity');
-  this.container.setAttribute('position','0 -0.05 -0.055');
-  this.container.setAttribute('rotation','90 0 0');
-  this.el.appendChild(this.container);
+  _buildUI(){
+    // Horizontal layout with guaranteed gaps using cumulative spacing
+    const gapMargin = 0.012;  // fixed minimum gap between outer rims
+    const zStep     = 0.0015; // slight z offset to avoid z-fighting
 
-  this.cells = this._radii.map((r,i)=>{
-    const ring = document.createElement('a-ring');
-    ring.setAttribute('radius-inner', r * 0.75);
-    ring.setAttribute('radius-outer', r);
-    ring.setAttribute('material','color:#E0E0E0;side:double;metalness:0;roughness:1');
-    ring.object3D.position.set((i - (this._radii.length - 1) / 2) * gap, 0, 0);
+    this.container = document.createElement('a-entity');
+    this.container.setAttribute('position','0 -0.05 -0.055');
+    this.container.setAttribute('rotation','90 0 0');
+    this.el.appendChild(this.container);
 
-    // Slight Z offset so they don't visually overlap
-    ring.object3D.position.z = i * 0.002; 
+    // Compute x positions so rings never overlap
+    const positions = [];
+    let x = 0;
+    this._rings.forEach((r, i) => {
+      if (i === 0) {
+        // first ring centered left of origin by its own radius
+        x = -r.rOuter;
+      } else {
+        const prev = this._rings[i-1];
+        // move right by prev outer radius + current outer radius + gap
+        x += prev.rOuter + r.rOuter + gapMargin;
+      }
+      positions.push(x);
+    });
 
-    this.container.appendChild(ring);
-    return ring;
-  });
-},
+    // Center the group horizontally
+    const centerOffset = (positions[0] + positions[positions.length-1]) / 2;
+    for (let i=0;i<positions.length;i++) positions[i] -= centerOffset;
 
+    // Create rings
+    this.cells = this._rings.map((r,i)=>{
+      const ring = document.createElement('a-ring');
+      ring.setAttribute('radius-inner', r.rInner);
+      ring.setAttribute('radius-outer', r.rOuter);
+      ring.setAttribute('material','color:#E0E0E0;side:double;metalness:0;roughness:1');
+      ring.object3D.position.set(positions[i], 0, i * zStep);
+      this.container.appendChild(ring);
+      return ring;
+    });
+  },
 
   _highlight(){
+    // Visual highlight + set brush thickness
     this.cells?.forEach((ring,i)=> {
-      ring.setAttribute('material', i===this.idx ? 'color:#D6D6D6;side:double' : 'color:#888;side:double');
+      ring.setAttribute('material', i===this.idx ? 'color:#D6D6D6;side:double;metalness:0;roughness:1'
+                                                 : 'color:#888;side:double;metalness:0;roughness:1');
     });
-    const t = this.sizes[this.idx];
-    const brush = document.querySelector('[active-brush]');
-    if (brush) brush.setAttribute('draw-line','thickness', t);
+    const t = this._rings[this.idx]?.t;
+    if (t != null) {
+      const brush = document.querySelector('[active-brush]');
+      if (brush) brush.setAttribute('draw-line','thickness', t);
+    }
   },
 
   onBtn(){
-    if (!this.sizes.length) return;
-    this.idx = (this.idx+1)%this.sizes.length;
+    if (!this._rings.length) return;
+    this.idx = (this.idx+1)%this._rings.length;
     this._highlight();
   },
 
   // ---------- hint ----------
   _makeSideHint(){
-    const s = this.data.hintSize;
+    const s = this.data.hintSize; // fixed — never altered by size mapping
     const p = document.createElement('a-plane');
     p.setAttribute('width',  s);
     p.setAttribute('height', s);
@@ -754,8 +788,6 @@ _buildUI(){
     return 'right';
   }
 });
-
-
 
 
 // 6) COLOR-PICKER — rebuilds on colors change + robust parsing
