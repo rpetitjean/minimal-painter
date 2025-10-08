@@ -657,10 +657,9 @@ AFRAME.registerComponent('size-picker',{
 
   // ---------- data prep ----------
 _prepareSizes(){
-  // Absolute domain for brush thickness
   const MIN_T = 0.001, MAX_T = 0.04;
 
-  // Parse → clamp → keep first 4 (minimalistic)
+  // Parse → clamp → keep first 4
   const raw = Array.isArray(this.data.sizes) ? this.data.sizes : (''+this.data.sizes).split(',');
   const nums = raw
     .map(x => +x)
@@ -668,25 +667,23 @@ _prepareSizes(){
     .map(v => Math.min(MAX_T, Math.max(MIN_T, v)));
 
   this.sizes = nums.slice(0, 4);
-  if (!this.sizes.length) this.sizes = [0.01]; // safe default
+  if (!this.sizes.length) this.sizes = [0.01]; // safe fallback
 
-  // --- PROPORTIONAL RINGS (absolute, log-scaled for better low-end separation) ---
-  // Visual radius bounds for the rings (not tied to hint size)
-  const rMin = 0.006, rMax = 0.020;
+  // === VISUAL MAPPING ===
+  // Wider radius range for clearer separation
+  const rMin = 0.004;  // smallest visual ring
+  const rMax = 0.035;  // largest visual ring
 
-  const log = v => Math.log(v);
-  const denom = log(MAX_T) - log(MIN_T);
-
-  const map = t => {
-    const f = (log(t) - log(MIN_T)) / denom; // 0..1 (log scale)
-    return rMin + f * (rMax - rMin);
-  };
+  // Perceptual mapping (gamma ≈ 0.4 emphasizes low end)
+  const gamma = 0.4;
+  const norm = t => (t - MIN_T) / (MAX_T - MIN_T);
+  const map = t => rMin + Math.pow(norm(t), gamma) * (rMax - rMin);
 
   this._radii = this.sizes.map(map);
 
-  // IMPORTANT: do not touch the hint here — its size stays at `hintSize`.
-  // (We only build the hint once in init(); updates rebuild rings only.)
+  // Hint stays fixed — never resized here.
 },
+
 
 
   // ---------- UI ----------
