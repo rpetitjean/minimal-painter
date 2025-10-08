@@ -656,34 +656,45 @@ AFRAME.registerComponent('size-picker',{
   },
 
   // ---------- data prep ----------
+// --- mapping: constant stroke; size encoded by ring outer radius ---
 _prepareSizes(){
-  // Clamp input to [0.001, 0.04], keep 4 max
+  // 1) Clamp incoming sizes to [0.001, 0.04] and keep first 4
   const MIN_T = 0.001, MAX_T = 0.04;
   const raw = Array.isArray(this.data.sizes) ? this.data.sizes : (''+this.data.sizes).split(',');
   const nums = raw
     .map(x => +x)
     .filter(v => Number.isFinite(v) && v > 0)
     .map(v => Math.min(MAX_T, Math.max(MIN_T, v)));
-  this._sizes = nums.slice(0,4);
+
+  this._sizes = nums.slice(0, 4);
   if (!this._sizes.length) this._sizes = [0.01];
 
-  // --- Mapping: draw-line thickness → ring size ---
-  // We'll make the radius proportional to sqrt(thickness) for better visual spacing
-  const MIN_R = 0.008;   // smallest visual radius (for MIN_T)
-  const MAX_R = 0.028;   // largest visual radius (for MAX_T)
-  const norm = t => (Math.sqrt(t) - Math.sqrt(MIN_T)) / (Math.sqrt(MAX_T) - Math.sqrt(MIN_T));
-  const mapR = t => MIN_R + norm(t) * (MAX_R - MIN_R);
+  // 2) Ring stroke (band) is CONSTANT for all options
+  const BAND = 0.0012;              // constant visual stroke width (m)
 
-  // Constant line stroke width for all rings
-  this._BAND = 0.0015;
+  // 3) Outer radius is proportional to (t / tMin)^p
+  //    - tMin anchors the smallest ring
+  //    - p < 1 emphasizes differences at the low end
+  const tMin = Math.min(...this._sizes);
+  const p    = 0.70;                // exponent (0.5 = sqrt, 1.0 = linear)
+  const R_MIN = BAND + 0.0008;      // smallest ring outer radius (tiny but visible)
+  const R_MAX = 0.030;              // hard cap to keep the biggest ring in bounds
 
-  // Build data for rings
+  // Proportional mapping with cap
+  const mapRadius = (t) => {
+    const ratio = Math.max(1, t / tMin);          // >= 1
+    const r = R_MIN * Math.pow(ratio, p);         // multiplicative growth
+    return Math.min(R_MAX, r);
+  };
+
+  // Build ring geometry
   this._rings = this._sizes.map(t => {
-    const rOuter = mapR(t);
-    const rInner = Math.max(rOuter - this._BAND, 0.001);
+    const rOuter = mapRadius(t);
+    const rInner = Math.max(rOuter - BAND, 0.001);
     return { t, rOuter, rInner };
   });
 },
+
 
 
   // ---------- UI ----------
