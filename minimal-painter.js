@@ -16,7 +16,7 @@ AFRAME.registerComponent('spatial-marker', {
 
     // --- Size-picker passthrough (applied whenever size-picker appears) ---
     sizes:           { default: [0.0025,0.005,0.01,0.02,] },
-    hintSize:        { default: 0.3 },
+    hintSize:        { default: 0.1 },
     imgHint:         { default: 'UI.png' },
     billboardHints:  { default: true },
 
@@ -298,24 +298,22 @@ AFRAME.registerComponent('painting-area-controller', {
     return handEl.components['button-colorizer'];
   },
 
-  _applyTints(painter, palette) {
-    const bcPainter = this._ensureColorizer(painter);
-    const bcPalette = this._ensureColorizer(palette);
-    if (!bcPainter) return;
+_applyTints(painter, palette) {
+  const bcPainter = this._ensureColorizer(painter);
+  const bcPalette = this._ensureColorizer(palette);
+  if (!bcPainter) return;
 
-    // Right: A red / B blue / Grip yellow. Left: X red / Y blue / Grip yellow.
-    const isRight = (painter === this.rightHand);
-    const scheme = isRight
-      ? { a:'#E94462', b:'#80A8FF', grip:'#d4e700' }
-      : { x:'#E94462', y:'#80A8FF', grip:'#d4e700' };
+  const isRight = (painter === this.rightHand);
+  const scheme = isRight ? CONTROLLER_COLORS.right : CONTROLLER_COLORS.left;
 
-      if (bcPainter && bcPainter.data) {
-  if (scheme.grip) bcPainter.data.emissiveIntensity = 0.3; // less glow for yellow
-}
+  // Slightly reduce emissive intensity for bright yellow grip (avoids shiny-white effect)
+  if (bcPainter.data && scheme.grip) {
+    bcPainter.data.emissiveIntensity = 0.3;
+  }
 
-    bcPainter.applyScheme(scheme);
-    if (bcPalette) bcPalette.clearScheme();
-  },
+  bcPainter.applyScheme(scheme);
+  if (bcPalette) bcPalette.clearScheme();
+},
 
   _clearTints() {
     [this.leftHand, this.rightHand].forEach(h => {
@@ -799,7 +797,7 @@ _buildUI(){
 AFRAME.registerComponent('color-picker',{
   schema:{
     colors:{ default:[
-  '#f2f23a','#d8d835',  
+   '#f2f23a','#d8d835',  
   '#f4bd36','#d29930','#f58436','#d06430',   
   '#f45336','#d13230','#f33a3a','#d13636','#f3398c','#d13470',   
   '#f339f3','#d134d8','#9933f3','#7300d8','#3333f3','#0000d8',   
@@ -1144,14 +1142,8 @@ AFRAME.registerComponent('thumbstick-controls', {
 // 8) BUTTON-COLORIZER
 AFRAME.registerComponent('button-colorizer', {
   schema: {
-    a:    { type: 'color', default: '#E94462' },
-    b:    { type: 'color', default: '#80A8FF' },
-    x:    { type: 'color', default: '#E94462' },
-    y:    { type: 'color', default: '#80A8FF' },
-    grip: { type: 'color', default: '#b6c600' },
-
     useEmissive:       { default: true },
-    emissiveIntensity: { default: 1 },
+    emissiveIntensity: { default: .3 },
     overrideBaseColor: { default: true },
     debug:             { default: false }
   },
