@@ -656,61 +656,56 @@ AFRAME.registerComponent('size-picker',{
   },
 
   // ---------- data prep ----------
-  _prepareSizes(){
-    // Clamp & keep first 4
-    const MIN_T = 0.001, MAX_T = 0.04;
-    const raw = Array.isArray(this.data.sizes) ? this.data.sizes : (''+this.data.sizes).split(',');
-    const nums = raw
-      .map(x => +x)
-      .filter(v => Number.isFinite(v) && v > 0)
-      .map(v => Math.min(MAX_T, Math.max(MIN_T, v)));
-    this._sizes = nums.slice(0,4);
-    if (!this._sizes.length) this._sizes = [0.01];
+_prepareSizes(){
+  // Clamp input sizes to [0.001, 0.04] and keep first 4
+  const MIN_T = 0.001, MAX_T = 0.04;
+  const raw = Array.isArray(this.data.sizes) ? this.data.sizes : (''+this.data.sizes).split(',');
+  const nums = raw
+    .map(x => +x)
+    .filter(v => Number.isFinite(v) && v > 0)
+    .map(v => Math.min(MAX_T, Math.max(MIN_T, v)));
+  this._sizes = nums.slice(0,4);
+  if (!this._sizes.length) this._sizes = [0.01];
 
-    // Same outer radius for ALL rings
-    this._R_OUT = 0.020; // 2 cm outer radius (adjust to taste)
+  // Constant radius for all rings
+  this._R_OUT = 0.02;   // 2 cm outer radius (feel free to adjust)
+  this._K = 1.2;        // visual scale factor from brush thickness → band width
 
-    // Band width encodes size, *proportional to the 4 values* you chose
-    const tMin = Math.min(...this._sizes);
-    const tMax = Math.max(...this._sizes);
-    const rel = (t) => (tMax>tMin) ? (t - tMin)/(tMax - tMin) : 0.5;
+  // Build geometry values
+  this._rings = this._sizes.map(t => {
+    const bw = this._K * t;                          // proportional to actual thickness
+    const rIn = Math.max(this._R_OUT - bw, 0.001);   // inner radius = outer - band
+    return { t, rOuter: this._R_OUT, rInner: rIn, band: bw };
+  });
+},
 
-    // Band width range (inner safety so the ring never disappears)
-    const BAND_MIN = 0.0012;                           // thinnest ring band
-    const BAND_MAX = Math.min(0.013, this._R_OUT - 0.002); // thickest band, safe cap
-
-    this._rings = this._sizes.map(t => {
-      const bw  = BAND_MIN + rel(t) * (BAND_MAX - BAND_MIN); // linear in your set
-      const rIn = Math.max(this._R_OUT - bw, 0.001);
-      return { t, rOuter: this._R_OUT, rInner: rIn, band: bw };
-    });
-  },
 
   // ---------- UI ----------
-  _buildUI(){
-    // Fixed spacing since all outer radii are the same
-    const gap = (this._R_OUT * 2) + 0.02; // diameter + 2cm margin
-    const zStep = 0.0015;
+_buildUI(){
+  // Fixed outer radius → equal circle size for all
+  const gap = (this._R_OUT * 2) + 0.02;  // spacing between centers
+  const zStep = 0.0015;
 
-    this.container = document.createElement('a-entity');
-    this.container.setAttribute('position','0 -0.05 -0.055');
-    this.container.setAttribute('rotation','90 0 0');
-    this.el.appendChild(this.container);
+  this.container = document.createElement('a-entity');
+  this.container.setAttribute('position','0 -0.05 -0.055');
+  this.container.setAttribute('rotation','90 0 0');
+  this.el.appendChild(this.container);
 
-    // Center positions across X
-    const count = this._rings.length;
-    const startX = -((count - 1) * gap) / 2;
+  // Center the 4 rings horizontally
+  const count = this._rings.length;
+  const startX = -((count - 1) * gap) / 2;
 
-    this.cells = this._rings.map((r,i)=>{
-      const ring = document.createElement('a-ring');
-      ring.setAttribute('radius-inner', r.rInner);
-      ring.setAttribute('radius-outer', r.rOuter);
-      ring.setAttribute('material','color:#E0E0E0;side:double;metalness:0;roughness:1');
-      ring.object3D.position.set(startX + i*gap, 0, i*zStep);
-      this.container.appendChild(ring);
-      return ring;
-    });
-  },
+  this.cells = this._rings.map((r,i)=>{
+    const ring = document.createElement('a-ring');
+    ring.setAttribute('radius-inner', r.rInner);
+    ring.setAttribute('radius-outer', r.rOuter);
+    ring.setAttribute('material','color:#E0E0E0;side:double;metalness:0;roughness:1');
+    ring.object3D.position.set(startX + i*gap, 0, i*zStep);
+    this.container.appendChild(ring);
+    return ring;
+  });
+},
+
 
   _highlight(){
     this.cells?.forEach((ring,i)=> {
