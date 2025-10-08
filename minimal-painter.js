@@ -1150,23 +1150,39 @@ AFRAME.registerComponent('button-colorizer', {
     overrideBaseColor: { default: true },
     debug:             { default: false },
 
-    // Emissive controls (per part). Keep face buttons subtle; grip = 0 by default.
+    // Emissive controls (per part)
     emissiveFace:      { default: 0.30 }, // A/B/X/Y
-    emissiveGrip:      { default: 0.00 }  // <- zero glow for grip to avoid whitening
+    emissiveGrip:      { default: 0.00 }  // <- keep grip non-emissive by default
   },
 
   init() {
-    this._targets  = {a:[], b:[], x:[], y:[], grip:[]};
-    this._original = new Map();
-    this._pending  = null;
+    this._targets     = {a:[], b:[], x:[], y:[], grip:[]};
+    this._original    = new Map();
+    this._pending     = null;
+    this._lastScheme  = null;
 
+    // Bind once
     this._onModelLoaded = () => {
       this._collectTargets();
-      if (this._pending) { this.applyScheme(this._pending); this._pending = null; }
+      this._reapplyIfNeeded();
     };
+    this._onButtonStateChange = () => this._reapplyIfNeeded();
+
+    // Listen for model + controller button state changes
     this.el.addEventListener('model-loaded', this._onModelLoaded);
     if (this.el.getObject3D('mesh')) this._onModelLoaded();
 
+    // Re-apply on typical input events that may swap meshes
+    const evs = [
+      'gripdown','gripup',
+      'abuttondown','abuttonup',
+      'bbuttondown','bbuttonup',
+      'xbuttondown','xbuttonup',
+      'ybuttondown','ybuttonup'
+    ];
+    evs.forEach(e => this.el.addEventListener(e, this._onButtonStateChange));
+
+    // scratch
     this._v = new THREE.Vector3();
     this._inv = new THREE.Matrix4();
   },
@@ -1174,55 +1190,21 @@ AFRAME.registerComponent('button-colorizer', {
   remove() {
     this.clearScheme();
     this.el.removeEventListener('model-loaded', this._onModelLoaded);
+    const evs = [
+      'gripdown','gripup',
+      'abuttondown','abuttonup',
+      'bbuttondown','bbuttonup',
+      'xbuttondown','xbuttonup',
+      'ybuttondown','ybuttonup'
+    ];
+    evs.forEach(e => this.el.removeEventListener(e, this._onButtonStateChange));
   },
 
   // ---- public API ----
   applyScheme(scheme) {
-    const mesh = this.el.getObject3D('mesh');
-    if (!mesh) { this._pending = scheme; return; }
-
-    // restore anything previously tinted by us
-    this._restoreTintedOnly();
-
-    const equiv = { a:['a','x'], x:['x','a'], b:['b','y'], y:['y','b'], grip:['grip'] };
-
-    Object.keys(scheme).forEach(key => {
-      const hex = scheme[key];
-      if (!hex) return;
-      const keysToApply = equiv[key] || [key];
-      keysToApply.forEach(k => {
-        (this._targets[k] || []).forEach(node => this._tintNode(node, hex, k)); // pass key
-      });
-    });
-
-    // positional fallback for face buttons kept as-is...
-    const faces = this._uniqueNodes([].concat(this._targets.a, this._targets.b, this._targets.x, this._targets.y));
-    if (faces.length >= 2) {
-      const needLeft  = (scheme.x || scheme.y);
-      const needRight = (scheme.a || scheme.b);
-      const missingLeft  = needLeft  && (this._targets.x.length === 0 || this._targets.y.length === 0);
-      const missingRight = needRight && (this._targets.a.length === 0 || this._targets.b.length === 0);
-      if (missingLeft || missingRight) {
-        const side = this._getSide();
-        const sorted = faces.map(n => ({ n, y: this._localY(n) })).sort((p,q) => q.y - p.y);
-        const top    = sorted[0]?.n;
-        const bottom = sorted[1]?.n;
-
-        const topColor =
-          (side === 'left')  ? (scheme.y) :
-          (side === 'right') ? (scheme.b) : null;
-        const botColor =
-          (side === 'left')  ? (scheme.x) :
-          (side === 'right') ? (scheme.a) : null;
-
-        if (top && topColor)    this._tintNode(top, topColor, side === 'left' ? 'y' : 'b');
-        if (bottom && botColor) this._tintNode(bottom, botColor, side === 'left' ? 'x' : 'a');
-      }
-    }
-
-    if (this.data.debug) {
-      console.log('[button-colorizer] scheme applied.');
-    }
+    // Cache and apply
+    this._lastScheme = scheme || null;
+    this._applyNow();
   },
 
   clearScheme() {
@@ -1239,6 +1221,59 @@ AFRAME.registerComponent('button-colorizer', {
   },
 
   // ---- internals ----
+  _reapplyIfNeeded() {
+    if (this._lastScheme) this._applyNow();
+  },
+
+  _applyNow() {
+    const mesh = this.el.getObject3D('mesh');
+    if (!mesh || !this._lastScheme) return;
+
+    // Always refresh targets, in case the controller swapped meshes
+    this._collectTargets();
+
+    // Restore previous tints, then re-apply fresh
+    this._restoreTintedOnly();
+
+    const scheme = this._lastScheme;
+    const equiv = { a:['a','x'], x:['x','a'], b:['b','y'], y:['y','b'], grip:['grip'] };
+
+    Object.keys(scheme).forEach(key => {
+      const hex = scheme[key];
+      if (!hex) return;
+      const keysToApply = equiv[key] || [key];
+      keysToApply.forEach(k => {
+        (this._targets[k] || []).forEach(node => this._tintNode(node, hex, k));
+      });
+    });
+
+    // Fallback pairing if labels collapsed
+    const faces = this._uniqueNodes([].concat(this._targets.a, this._targets.b, this._targets.x, this._targets.y));
+    if (faces.length >= 2) {
+      const needLeft  = (scheme.x || scheme.y);
+      const needRight = (scheme.a || scheme.b);
+      const missingLeft  = needLeft  && (this._targets.x.length === 0 || this._targets.y.length === 0);
+      const missingRight = needRight && (this._targets.a.length === 0 || this._targets.b.length === 0);
+      if (missingLeft || missingRight) {
+        const side = this._getSide();
+        const sorted = faces.map(n => ({ n, y: this._localY(n) })).sort((p,q) => q.y - p.y);
+        const top    = sorted[0]?.n;
+        const bottom = sorted[1]?.n;
+        const topColor =
+          (side === 'left')  ? (scheme.y) :
+          (side === 'right') ? (scheme.b) : null;
+        const botColor =
+          (side === 'left')  ? (scheme.x) :
+          (side === 'right') ? (scheme.a) : null;
+
+        if (top && topColor)    this._tintNode(top, topColor, side === 'left' ? 'y' : 'b');
+        if (bottom && botColor) this._tintNode(bottom, botColor, side === 'left' ? 'x' : 'a');
+      }
+    }
+
+    if (this.data.debug) console.log('[button-colorizer] scheme (re)applied.');
+  },
+
   _uniqueNodes(arr) {
     const seen = new Set(); const out = [];
     arr.forEach(n => { if (n && !seen.has(n.uuid)) { seen.add(n.uuid); out.push(n); } });
@@ -1285,7 +1320,7 @@ AFRAME.registerComponent('button-colorizer', {
     const mesh = this.el.getObject3D('mesh');
     if (!mesh) return;
 
-    const order = ['a','b','x','y','grip']; // first match wins
+    const order = ['a','b','x','y','grip'];
     mesh.traverse(n => {
       if (!n.isMesh || !n.name) return;
       const name = n.name.toLowerCase().replace(/\s+/g, '');
@@ -1341,7 +1376,7 @@ AFRAME.registerComponent('button-colorizer', {
     return r > 0 && r < 0.05;
   },
 
-  // NOTE: now gets the button key as 3rd argument
+  // now receives whichKey to pick per-part emissive
   _tintNode(node, hex, whichKey) {
     if (!this._original.has(node.uuid)) {
       const mats = Array.isArray(node.material) ? node.material : [node.material];
@@ -1363,7 +1398,6 @@ AFRAME.registerComponent('button-colorizer', {
           m.emissive.set(hex);
           if ('emissiveIntensity' in m) m.emissiveIntensity = emissiveIntensity;
         } else {
-          // explicitly kill emissive for grip if set to 0
           m.emissive.set(0x000000);
           if ('emissiveIntensity' in m) m.emissiveIntensity = 0;
         }
