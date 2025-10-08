@@ -667,43 +667,45 @@ _prepareSizes(){
     .map(v => Math.min(MAX_T, Math.max(MIN_T, v)));
 
   this.sizes = nums.slice(0, 4);
-  if (!this.sizes.length) this.sizes = [0.01]; // safe fallback
+  if (!this.sizes.length) this.sizes = [0.01]; // fallback in-range
 
-  // === VISUAL MAPPING ===
-  // Wider radius range for clearer separation
-  const rMin = 0.004;  // smallest visual ring
-  const rMax = 0.035;  // largest visual ring
-
-  // Perceptual mapping (gamma ≈ 0.4 emphasizes low end)
-  const gamma = 0.4;
+  // --- Enhanced perceptual mapping ---
+  // We map the *apparent diameter* to brush thickness^0.33
+  // This makes small brushes visually larger than a linear mapping.
+  const rMin = 0.004;   // smallest visual radius
+  const rMax = 0.035;   // largest visual radius
   const norm = t => (t - MIN_T) / (MAX_T - MIN_T);
-  const map = t => rMin + Math.pow(norm(t), gamma) * (rMax - rMin);
+  const map  = t => rMin + Math.pow(norm(t), 1/3) * (rMax - rMin);
 
   this._radii = this.sizes.map(map);
-
-  // Hint stays fixed — never resized here.
 },
 
 
 
-  // ---------- UI ----------
-  _buildUI(){
-    const gap=0.03;
-    this.container=document.createElement('a-entity');
-    this.container.setAttribute('position','0 -0.05 -0.055');
-    this.container.setAttribute('rotation','90 0 0');
-    this.el.appendChild(this.container);
 
-    this.cells = this._radii.map((r,i)=>{
-      const ring=document.createElement('a-ring');
-      ring.setAttribute('radius-inner', r*0.8);
-      ring.setAttribute('radius-outer', r);
-      ring.setAttribute('material','color:#E0E0E0;side:double');
-      ring.object3D.position.set((i-(this._radii.length-1)/2)*gap,0,0);
-      this.container.appendChild(ring);
-      return ring;
-    });
-  },
+  // ---------- UI ----------
+_buildUI(){
+  const gap = 0.04; // increased spacing between rings
+  this.container = document.createElement('a-entity');
+  this.container.setAttribute('position','0 -0.05 -0.055');
+  this.container.setAttribute('rotation','90 0 0');
+  this.el.appendChild(this.container);
+
+  this.cells = this._radii.map((r,i)=>{
+    const ring = document.createElement('a-ring');
+    ring.setAttribute('radius-inner', r * 0.75);
+    ring.setAttribute('radius-outer', r);
+    ring.setAttribute('material','color:#E0E0E0;side:double;metalness:0;roughness:1');
+    ring.object3D.position.set((i - (this._radii.length - 1) / 2) * gap, 0, 0);
+
+    // Slight Z offset so they don't visually overlap
+    ring.object3D.position.z = i * 0.002; 
+
+    this.container.appendChild(ring);
+    return ring;
+  });
+},
+
 
   _highlight(){
     this.cells?.forEach((ring,i)=> {
