@@ -309,6 +309,10 @@ AFRAME.registerComponent('painting-area-controller', {
       ? { a:'#E94462', b:'#80A8FF', grip:'#d4e700' }
       : { x:'#E94462', y:'#80A8FF', grip:'#d4e700' };
 
+      if (bcPainter && bcPainter.data) {
+  if (scheme.grip) bcPainter.data.emissiveIntensity = 0.3; // less glow for yellow
+}
+
     bcPainter.applyScheme(scheme);
     if (bcPalette) bcPalette.clearScheme();
   },
