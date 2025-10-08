@@ -173,6 +173,12 @@ AFRAME.registerComponent('spatial-marker', {
 AFRAME.registerComponent('painting-area-controller', {
   schema: { areaSelector: { default: '.paintingArea' } },
 
+ CONTROLLER_COLORS: {
+  right: { a:'#E94462', b:'#80A8FF', grip:'#d4e700' },
+  left:  { x:'#E94462', y:'#80A8FF', grip:'#d4e700' }
+},
+
+
   init() {
     this.areas     = Array.from(document.querySelectorAll(this.data.areaSelector));
     this.leftHand  = document.getElementById('left-hand');
@@ -298,22 +304,22 @@ AFRAME.registerComponent('painting-area-controller', {
     return handEl.components['button-colorizer'];
   },
 
-_applyTints(painter, palette) {
-  const bcPainter = this._ensureColorizer(painter);
-  const bcPalette = this._ensureColorizer(palette);
-  if (!bcPainter) return;
+ _applyTints(painter, palette) {
+    const bcPainter = this._ensureColorizer(painter);
+    const bcPalette = this._ensureColorizer(palette);
+    if (!bcPainter) return;
 
-  const isRight = (painter === this.rightHand);
-  const scheme = isRight ? CONTROLLER_COLORS.right : CONTROLLER_COLORS.left;
+    const isRight = (painter === this.rightHand);
+    const scheme = isRight ? this.CONTROLLER_COLORS.right : this.CONTROLLER_COLORS.left;
 
-  // Slightly reduce emissive intensity for bright yellow grip (avoids shiny-white effect)
-  if (bcPainter.data && scheme.grip) {
-    bcPainter.data.emissiveIntensity = 0.3;
-  }
+    // Dim emissive for bright yellow grip
+    if (bcPainter.data && scheme.grip) {
+      bcPainter.data.emissiveIntensity = 0.3;
+    }
 
-  bcPainter.applyScheme(scheme);
-  if (bcPalette) bcPalette.clearScheme();
-},
+    bcPainter.applyScheme(scheme);
+    if (bcPalette) bcPalette.clearScheme();
+  },
 
   _clearTints() {
     [this.leftHand, this.rightHand].forEach(h => {
