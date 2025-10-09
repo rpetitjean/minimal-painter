@@ -382,7 +382,7 @@ AFRAME.registerComponent('paint-tool-reset', {
     this.currentSide = side;
 
     const painter = (side === 'left') ? this.leftHand : this.rightHand;
-    const palette = (side === 'left') ? this.rightHand : this.leftHand;
+    // Removed unused variable 'palette'
 
     // Clean paint UI from both hands (keep locomotion)
     [ this.leftHand, this.rightHand ].forEach(hand => {
@@ -445,7 +445,7 @@ AFRAME.registerComponent('hand-swapper', {
 
   activate(side) {
     const painter = side === 'left' ? this.leftHand : this.rightHand;
-    const palette = side === 'left' ? this.rightHand : this.leftHand;
+    // Removed unused variable 'palette'
 
     // Clean paint UI; keep locomotion
     [this.leftHand, this.rightHand].forEach(h => {
@@ -845,7 +845,7 @@ AFRAME.registerComponent('color-picker',{
     // Layout definition (unchanged)
     this.rowSizes=[2,4,6,6,4,2];
     this.rowStart=[0];
-    this.rowSizes.forEach((sz,i)=>{ if(i>0) this.rowStart.push(this.rowStart[i-1]+this.rowSizes[i-1]); });
+    this.rowSizes.forEach((_,i)=>{ if(i>0) this.rowStart.push(this.rowStart[i-1]+this.rowSizes[i-1]); });
     this._capacity = this.rowSizes.reduce((a,b)=>a+b,0);
 
     // State
@@ -993,7 +993,7 @@ AFRAME.registerComponent('color-picker',{
     this.selected = this.rowStart[nr] + newCol;
   },
 
-  _applyColor(initial=false){
+  _applyColor(){
     if (!this.ring) return;
     const x = this.cellX[this.selected] ?? 0;
     const y = this.cellY[this.selected] ?? 0;
@@ -1076,7 +1076,7 @@ AFRAME.registerComponent('thumbstick-controls', {
     update: function() {
         this.rigElement = document.querySelector(this.data.rigSelector)
     },
-    tick: function (time, delta) {
+    tick: function (delta) {
         if (!this.el.sceneEl.is('vr-mode')) return;
         var data = this.data;
         var el = this.rigElement
