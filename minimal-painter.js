@@ -15,7 +15,7 @@ AFRAME.registerComponent('spatial-marker', {
     areaTransparent: { default: true },
 
     // --- Size-picker passthrough (applied whenever size-picker appears) ---
-    sizes:           { default: [0.0025,0.005,0.01,0.02,] },
+    markerSize:           { default: [0.0025,0.005,0.01,0.02,] },
     hintSize:        { default: 0.1 },
     imgHint:         { default: 'UI.png' },
     billboardHints:  { default: true },
@@ -83,16 +83,16 @@ AFRAME.registerComponent('spatial-marker', {
   },
 
   // ---------- APPLY CONFIGS ----------
-  _applySizePickerOptions(handEl){
-    // Only configure if this is the BRUSH hand (has active-brush), else ignore
-    if (!handEl.hasAttribute('active-brush')) return;
-    handEl.setAttribute('size-picker', {
-      sizes: this.data.sizes,
-      hintSize: this.data.hintSize,
-      imgHint: this.data.imgHint,
-      billboardHints: this.data.billboardHints
-    });
-  },
+_applySizePickerOptions(handEl){
+  if (!handEl.hasAttribute('active-brush')) return;
+  handEl.setAttribute('size-picker', {
+    sizes: this.data.markerSize,   // <-- was this.data.sizes
+    hintSize: this.data.markerSizeHint || this.data.hintSize || 0.1, // optional; keep your old hint if used
+    imgHint: this.data.imgHint,
+    billboardHints: this.data.billboardHints
+  });
+},
+
 
   _applyColorPickerOptions(handEl){
     // Only configure if this is the PALETTE hand (no active-brush), else ignore
